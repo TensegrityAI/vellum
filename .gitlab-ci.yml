@@ -56,8 +56,9 @@ test:
     - bun run check
     - bun run test
 
-# Push to the GitHub mirror using the deploy key (write) stored in the
-# protected, file-type CI/CD variable GITHUB_MIRROR_SSH_KEY.
+# Push to the GitHub mirror using the deploy key (write). The private key is
+# stored base64-encoded in the protected CI/CD variable GITHUB_MIRROR_SSH_KEY_B64
+# (base64 avoids the newline/encoding corruption that breaks raw SSH keys in CI).
 mirror:
   stage: mirror
   image: alpine:3.20
@@ -70,7 +71,9 @@ mirror:
     - apk add --no-cache git openssh-client
   script:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - cp "$GITHUB_MIRROR_SSH_KEY" ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+    - echo "$GITHUB_MIRROR_SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null # fail fast if the key is malformed
     - ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
     - git remote remove github 2>/dev/null || true
     - git remote add github git@github.com:TensegrityAI/vellum.git
