@@ -28,4 +28,11 @@ describe("groupTokensByKind", () => {
   it("returns an empty record for an empty token array", () => {
     expect(groupTokensByKind(new Uint32Array([]))).toEqual({});
   });
+
+  it("drops a trailing partial triple rather than reading undefined", () => {
+    // The wire always emits whole triples; guard the contract anyway.
+    expect(groupTokensByKind(new Uint32Array([0, 2, 0, 5]))).toEqual({
+      0: [[0, 2]],
+    });
+  });
 });

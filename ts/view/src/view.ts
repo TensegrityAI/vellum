@@ -74,7 +74,14 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
 function syncCoreToValue(editor: Editor, value: string): void {
   const current = editor.text();
   if (current === value) return;
-  // Core offsets are byte offsets, so delete the full current byte length.
+  // Core offsets are UTF-8 byte offsets; `delete`/`insert` PANIC (an
+  // unrecoverable WASM trap) on a non-char-boundary offset. The ONLY thing
+  // keeping this char-boundary-safe is that we always delete the FULL buffer
+  // [0, currentBytes] and insert at 0 — both are guaranteed boundaries.
+  // ⚠️ Increment 1 (ADR-0003) replaces this with diff-based mutation: it MUST
+  // convert UTF-16 (DOM/textarea) offsets to UTF-8 byte offsets before calling
+  // delete/insert, or the core will trap. Do not remove the full-buffer delete
+  // without doing that conversion first.
   const currentBytes = new TextEncoder().encode(current).length;
   if (currentBytes > 0) {
     editor.delete(0, currentBytes);
@@ -116,6 +123,10 @@ function paintHighlights(textNode: Text, flat: Uint32Array): void {
   }
 }
 
+// ⚠️ `CSS.highlights` is a process-global singleton and these highlight names
+// are fixed strings, so Vellum currently assumes a SINGLE mounted surface. Two
+// coexisting `mountVellum` instances would clobber each other's ranges globally.
+// Increment 1 multi-surface support must namespace these names per instance.
 /** Remove all Vellum highlights from the global registry. */
 function clearHighlights(): void {
   if (typeof CSS === "undefined" || !("highlights" in CSS)) return;

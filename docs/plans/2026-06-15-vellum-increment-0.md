@@ -612,3 +612,11 @@ describe("groupTokensByKind", () => {
   boundary a panic traps and **poisons the `Editor` instance** (subsequent calls also
   trap). Acceptable for Inc 0 (JS is a trusted caller), but Inc 1 must validate offsets
   and return `Result<_, JsError>` instead of trapping. (Phase C review, ADR-0002/0003.)
+- **UTF-16 → UTF-8 offset conversion is a BLOCKER for diff-based input (→ Increment 1,
+  ADR-0003).** The Inc-0 view resyncs the core by deleting the full buffer and reinserting
+  at 0 (always char-boundary-safe). The moment Inc 1 introduces real diffing, DOM/textarea
+  UTF-16 offsets must be converted to UTF-8 byte offsets before calling `delete`/`insert`,
+  or the core traps. See the warning comment in `ts/view/src/view.ts` (`syncCoreToValue`).
+- **Highlight names are process-global (→ Increment 1).** `CSS.highlights` is a singleton
+  and Vellum uses fixed highlight names, so only ONE surface can mount today. Multi-surface
+  support must namespace highlight names per instance. (Phase D review.)
