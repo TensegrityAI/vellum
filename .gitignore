@@ -1,0 +1,12 @@
+# Rust
+/target
+
+# Node / TS
+node_modules
+dist
+
+# WASM build artifacts
+pkg
+
+# Env
+.env
