@@ -1,0 +1,10 @@
+{
+  "name": "vellum",
+  "private": true,
+  "type": "module",
+  "workspaces": ["ts/*"],
+  "scripts": {
+    "check": "bun run --cwd ts/view check",
+    "test": "bun run --cwd ts/view test"
+  }
+}
