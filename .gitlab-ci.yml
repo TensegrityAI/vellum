@@ -23,6 +23,7 @@ test:
       - .cargo/bin/
       - target/
   before_script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup component add clippy rustfmt
     - rustup target add wasm32-unknown-unknown
     - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip
@@ -32,9 +33,17 @@ test:
     # Bun
     - curl -fsSL https://bun.sh/install | bash
     - export BUN_INSTALL="$HOME/.bun" && export PATH="$BUN_INSTALL/bin:$PATH"
-    # wasm-pack + cargo-deny (cached in .cargo/bin between runs)
-    - command -v wasm-pack >/dev/null || cargo install wasm-pack --locked
-    - command -v cargo-deny >/dev/null || cargo install cargo-deny --locked
+    # wasm-pack + cargo-deny as PREBUILT binaries via cargo-binstall.
+    # Compiling them from source breaks: their latest releases need a rustc newer
+    # than our pinned 1.89 (rust-toolchain.toml). Prebuilt binaries run regardless.
+    # Cached in .cargo/bin between runs.
+    - |
+      if ! command -v cargo-binstall >/dev/null; then
+        curl -L --proto '=https' --tlsv1.2 -sSf \
+          https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+      fi
+    - command -v wasm-pack >/dev/null || cargo binstall -y wasm-pack
+    - command -v cargo-deny >/dev/null || cargo binstall -y cargo-deny
   script:
     - cargo fmt --all -- --check
     - cargo clippy --all-targets -- -D warnings
