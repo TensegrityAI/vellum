@@ -1,0 +1,50 @@
+/*
+ * Vellum syntax highlighting via the CSS Custom Highlight API.
+ * No per-token <span>s — the colors below paint Range objects registered by
+ * mountVellum() into CSS.highlights.
+ */
+
+.vellum-surface,
+.vellum-input {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+    monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+.vellum-surface {
+  position: relative;
+  margin: 0;
+  padding: 12px;
+  color: #c0c5ce;
+}
+
+.vellum-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: #c0c5ce;
+  outline: none;
+}
+
+::highlight(vellum-variable) {
+  color: #7c5cff;
+}
+
+::highlight(vellum-statement) {
+  color: #d08770;
+}
+
+::highlight(vellum-comment) {
+  color: #8a8f98;
+  font-style: italic;
+}
