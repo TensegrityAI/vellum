@@ -35,6 +35,16 @@ impl TextBuffer {
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
+
+    /// Insert `s` at byte offset `at`. Panics if `at` is not a char boundary.
+    pub fn insert(&mut self, at: usize, s: &str) {
+        self.text.insert_str(at, s);
+    }
+
+    /// Delete the byte `range`. Panics if either bound is not a char boundary.
+    pub fn delete(&mut self, range: std::ops::Range<usize>) {
+        self.text.replace_range(range, "");
+    }
 }
 
 #[cfg(test)]
@@ -52,5 +62,26 @@ mod tests {
     fn from_str_round_trips() {
         let buf = TextBuffer::from_str("Hello {{ name }}");
         assert_eq!(buf.text(), "Hello {{ name }}");
+    }
+
+    #[test]
+    fn insert_at_start_middle_end() {
+        let mut buf = TextBuffer::from_str("Helo");
+        buf.insert(3, "l"); // byte offset
+        assert_eq!(buf.text(), "Hello");
+    }
+
+    #[test]
+    fn delete_range_removes_text() {
+        let mut buf = TextBuffer::from_str("Hello world");
+        buf.delete(5..11);
+        assert_eq!(buf.text(), "Hello");
+    }
+
+    #[test]
+    #[should_panic]
+    fn insert_on_non_char_boundary_panics() {
+        let mut buf = TextBuffer::from_str("áé"); // multibyte
+        buf.insert(1, "x"); // splits 'á'
     }
 }
