@@ -1,0 +1,27 @@
+[package]
+name = "vellum-wasm"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vellum-core = { path = "../core" }
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# NOTE: We do NOT use `[lints] workspace = true` here. The workspace sets
+# `unsafe_code = "forbid"`, and `forbid` cannot be relaxed by a crate-level
+# `#![allow(unsafe_code)]`. wasm-bindgen emits glue that requires `unsafe`, so
+# this crate (and ONLY this crate) downgrades it to `allow`. The clippy posture
+# from the workspace is mirrored explicitly so nothing is lost.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
