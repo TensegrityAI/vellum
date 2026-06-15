@@ -25,9 +25,9 @@ scope (`@nexum/*` vs a neutral scope), and which forge.
   coupled to `agentId`/admin-store the way the legacy editor was.
 - **License: Apache-2.0** — permissive, patent-granting, coherent with the
   `kineticrs` house signature and suitable for external adoption.
-- **npm scope: `@vellum/*`** — a neutral, product-named scope (`@vellum/core`,
-  `@vellum/view`, `@vellum/react`) rather than `@nexum/*`, keeping the engine
-  domain-agnostic and unbranded by its first consumer.
+- **npm scope: leaning `@vellum/*`** (ratified at the public flip) — a neutral,
+  product-named scope (`@vellum/core`, `@vellum/view`, `@vellum/react`) rather than
+  `@nexum/*`, keeping the engine domain-agnostic and unbranded by its first consumer.
 - **Private → public flip after Increment 0.** The repo is authored OSS-ready
   (clean history, no secrets, full governance) but stays **private** until the
   Increment 0 walking-skeleton demo is judged to "shine" — typing Jinja2 shows

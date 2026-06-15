@@ -48,7 +48,8 @@ ts/
   react/       # React/Next wrapper for the consumer (later increments).
 ```
 
-Dependency direction is strict and one-way: `core` -> `wasm` -> `ts/view` -> `ts/react`.
+Dependency direction is strict and one-way — each layer depends only on the one to its
+left (outer depends on inner): `core ← wasm ← ts/view ← ts/react`.
 `core` knows nothing about the browser or about prompts.
 
 ## Build & Run

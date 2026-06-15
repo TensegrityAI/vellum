@@ -7,6 +7,11 @@ dist
 
 # WASM build artifacts
 pkg
+ts/view/wasm/
+
+# Coverage
+/coverage
+*.profraw
 
 # Env
 .env
