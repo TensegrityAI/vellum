@@ -604,3 +604,11 @@ describe("groupTokensByKind", () => {
 - `Language` trait + `lang-jinja` crate (parser/lint/autocomplete/hover) → **Increment 2**.
 - `ts/react` wrapper, host ports, live preview, Nexum replacement → **Increment 3**.
 - AI Assist, version history + diff, snippets → **Deferred**.
+
+### Tracked follow-ups raised during Increment 0
+
+- **WASM-boundary panic safety (→ Increment 1).** `Editor::insert`/`delete` forward to
+  core methods that panic on out-of-bounds / non-char-boundary offsets; at the WASM
+  boundary a panic traps and **poisons the `Editor` instance** (subsequent calls also
+  trap). Acceptable for Inc 0 (JS is a trusted caller), but Inc 1 must validate offsets
+  and return `Result<_, JsError>` instead of trapping. (Phase C review, ADR-0002/0003.)

@@ -1,8 +1,14 @@
 //! Vellum WASM bindings. The only place `unsafe` may appear in the workspace:
 //! wasm-bindgen generates glue code that requires it. The pure `vellum-core`
 //! crate stays `#![forbid(unsafe_code)]`; this opt-out is scoped to this crate
-//! and applies to wasm-bindgen generated glue ONLY.
-#![allow(unsafe_code)]
+//! via its `Cargo.toml` (`[lints.rust] unsafe_code = "allow"`) — a crate-level
+//! `#![allow]` cannot relax the workspace `forbid` (E0453), so the lint lives in
+//! the manifest, not here.
+//!
+//! Increment-1 follow-up (tracked): `insert`/`delete` forward to core methods
+//! that PANIC on out-of-bounds / non-char-boundary offsets. At the WASM boundary
+//! a panic traps and poisons this `Editor` instance (later calls also trap).
+//! Increment 1 should validate offsets and return `Result<_, JsError>` instead.
 
 use vellum_core::{tokenize, TextBuffer};
 use wasm_bindgen::prelude::*;
