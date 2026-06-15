@@ -2,5 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod buffer;
+mod token;
 
 pub use buffer::TextBuffer;
+pub use token::{Token, TokenKind};
