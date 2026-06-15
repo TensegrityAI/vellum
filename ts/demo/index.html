@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vellum — Increment 0 Playground</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #1b1f24;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        color: #c0c5ce;
+      }
+      main {
+        width: min(720px, 90vw);
+      }
+      h1 {
+        font-weight: 600;
+        font-size: 1rem;
+        letter-spacing: 0.02em;
+        color: #8a8f98;
+      }
+      #app {
+        position: relative;
+        border: 1px solid #2c333c;
+        border-radius: 8px;
+        background: #15181d;
+        min-height: 160px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Vellum — the surface you write your prompts on</h1>
+      <div id="app"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

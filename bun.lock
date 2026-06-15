@@ -5,6 +5,16 @@
     "": {
       "name": "vellum",
     },
+    "ts/demo": {
+      "name": "@vellum/demo",
+      "version": "0.0.0",
+      "dependencies": {
+        "@vellum/view": "workspace:*",
+      },
+      "devDependencies": {
+        "vite": "^5.4.0",
+      },
+    },
     "ts/view": {
       "name": "@vellum/view",
       "version": "0.0.0",
@@ -114,6 +124,8 @@
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.62.0", "", { "os": "win32", "cpu": "x64" }, "sha512-5L+T1fMX4RIEBoZzT0+sQ0PhTS36NULFmMXtl1TZo44TMAROIMHbZufSOjVWt/Y622BtxgxtaNOokbTDvfsrZA=="],
 
     "@types/estree": ["@types/estree@1.0.9", "", {}, "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="],
+
+    "@vellum/demo": ["@vellum/demo@workspace:ts/demo"],
 
     "@vellum/view": ["@vellum/view@workspace:ts/view"],
 
