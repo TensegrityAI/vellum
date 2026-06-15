@@ -54,7 +54,40 @@ left (outer depends on inner): `core ← wasm ← ts/view ← ts/react`.
 
 ## Build & Run
 
-> _TODO: filled in once the WASM build and demo land (Increment 0, Task E2)._
+**Prerequisites:** Rust `1.89` (pinned via `rust-toolchain.toml`), the
+`wasm32-unknown-unknown` target, [`wasm-pack`](https://rustwasm.github.io/wasm-pack/), and
+[Bun](https://bun.sh/).
+
+```bash
+# Rust target + wasm tooling
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack            # if not already installed
+
+# Build the WASM package the view consumes (outputs to ts/view/wasm/, gitignored)
+bash scripts/build-wasm.sh
+
+# Install JS deps and run the standalone playground
+bun install
+bun run --cwd ts/demo dev          # open the printed http://localhost:5173/
+```
+
+Type Jinja2 (`{{ variable }}`, `{% statement %}`, `{# comment #}`) and watch it highlight
+live — every edit round-trips through the Rust core in WASM, and coloring is painted with
+the **CSS Custom Highlight API** (no `<span>` per token):
+
+![Vellum Increment 0 demo — live Jinja2 highlighting](docs/assets/inc0-demo.png)
+
+### Checks (what CI runs)
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo deny check
+wasm-pack test --node crates/wasm
+bun run check        # tsc --noEmit (strict)
+bun run test         # vitest
+```
 
 ## License
 
