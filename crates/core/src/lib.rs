@@ -14,5 +14,5 @@ pub use cursor::Selection;
 pub use document::Document;
 pub use event::EditEvent;
 pub use lang_jinja::tokenize;
-pub use offset::{ByteOffset, CharOffset, Utf16Offset};
+pub use offset::{ByteOffset, ByteRange, CharOffset, Utf16Offset};
 pub use token::{Token, TokenKind};

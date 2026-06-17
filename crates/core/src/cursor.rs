@@ -33,7 +33,7 @@
 //! shrinking the selection while the anchor stays put.
 
 use crate::buffer::TextBuffer;
-use crate::offset::ByteOffset;
+use crate::offset::{ByteOffset, ByteRange};
 use std::ops::Range;
 
 /// A text selection: an `anchor` (fixed end) and a `head` (moving caret).
@@ -88,11 +88,25 @@ impl Selection {
 
     /// The selection as a byte `Range`, normalized (`start..end`).
     ///
-    /// Useful directly for `delete`/render, which want an ordered byte range
-    /// regardless of selection direction.
+    /// Useful directly for render or any consumer that wants the raw ordered
+    /// `usize` range regardless of selection direction. For the typed mutation
+    /// path (`doc.delete(...)`) prefer [`byte_range`](Self::byte_range), which
+    /// returns a [`ByteRange`] the aggregate front door accepts without a cast.
     #[must_use]
     pub fn range(&self) -> Range<usize> {
         self.start().get()..self.end().get()
+    }
+
+    /// The selection as an **ordered** [`ByteRange`] (`start..end`).
+    ///
+    /// The typed counterpart of [`range`](Self::range): it normalizes a reversed
+    /// selection (`anchor > head`) and yields the newtype span so the editor flow
+    /// can do `doc.delete(sel.byte_range())` end-to-end in byte space, with no
+    /// bare `usize` range in sight. Always ordered, so it never trips
+    /// [`Document::delete`](crate::Document::delete)'s inverted-range panic.
+    #[must_use]
+    pub fn byte_range(&self) -> ByteRange {
+        ByteRange::new(self.start(), self.end())
     }
 
     /// Drop the selection, keeping the caret at `head` (`anchor = head`).
@@ -272,6 +286,22 @@ mod tests {
         assert_eq!(sel.end(), ByteOffset(5));
         assert_eq!(sel.range(), 2..5);
         assert!(!sel.is_empty());
+    }
+
+    #[test]
+    fn byte_range_is_ordered_even_for_a_reversed_selection() {
+        // A reversed selection (anchor > head) must still yield an ordered
+        // ByteRange so `doc.delete(sel.byte_range())` never hits the
+        // inverted-range panic.
+        use crate::offset::ByteRange;
+        let sel = Selection::new(ByteOffset(5), ByteOffset(2));
+        assert_eq!(
+            sel.byte_range(),
+            ByteRange::new(ByteOffset(2), ByteOffset(5)),
+        );
+        // And matches the raw range() for the common forward case too.
+        let fwd = Selection::new(ByteOffset(1), ByteOffset(4));
+        assert_eq!(fwd.byte_range().get(), fwd.range());
     }
 
     #[test]

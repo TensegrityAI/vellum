@@ -31,8 +31,7 @@
 
 use crate::buffer::TextBuffer;
 use crate::event::EditEvent;
-use crate::offset::ByteOffset;
-use std::ops::Range;
+use crate::offset::{ByteOffset, ByteRange};
 
 /// An event-sourced text document with undo/redo.
 ///
@@ -117,29 +116,42 @@ impl Document {
 
     /// Delete the byte `range`, recording history.
     ///
+    /// The `range` is a [`ByteRange`] (a pair of [`ByteOffset`]s), not a bare
+    /// `Range<usize>`: this is the aggregate **front door**, and the newtype makes
+    /// it impossible to hand it a `char`- or UTF-16-indexed range by mistake (I1
+    /// hardening). The raw `usize` range is recovered only at the slice boundary
+    /// below, via [`ByteRange::get`].
+    ///
     /// **The `removed` text is read out of the buffer here**, never accepted from
     /// the caller: this is the F4-review invariant that makes the resulting
     /// `Deleted` event well-formed by construction (see module docs). We slice the
     /// current text by the byte range — `text()` returns an owned `String`, so we
     /// slice it and `.to_string()` the removed run.
     ///
-    /// **Panic contract:** the byte range is validated by the **`str` slice** at
-    /// the point of capture below, with standard-library semantics — it panics if
-    /// either bound is not on a UTF-8 char boundary, if a bound is out of range,
-    /// **or if `range.start > range.end`** (inverted range). These three panic
-    /// shapes and their stdlib messages differ from `TextBuffer::delete`'s own
-    /// contract (the slice short-circuits before the buffer is ever touched).
-    /// Task H1, which converts these into a `Result` at the wasm boundary, must
-    /// validate against the *slice* semantics here, not the buffer's.
-    pub fn delete(&mut self, range: Range<usize>) {
+    /// **Panic contract (unchanged from the previous `Range<usize>` signature):**
+    /// the byte range is validated by the **`str` slice** at the point of capture
+    /// below, with standard-library semantics — it panics if either bound is not on
+    /// a UTF-8 char boundary, if a bound is out of range, **or if
+    /// `range.start > range.end`** (inverted range). This method does **not**
+    /// silently normalize an inverted `ByteRange` (no implicit
+    /// [`ordered`](ByteRange::ordered)); an inverted range still panics, exactly as
+    /// before, so the behavior and H1's contract note are unchanged. Callers with a
+    /// possibly-reversed span (e.g. a selection) must normalize first — see
+    /// [`Selection::byte_range`](crate::Selection::byte_range), which returns an
+    /// ordered range. These three panic shapes and their stdlib messages differ
+    /// from `TextBuffer::delete`'s own contract (the slice short-circuits before the
+    /// buffer is ever touched). Task H1, which converts these into a `Result` at the
+    /// wasm boundary, must validate against the *slice* semantics here, not the
+    /// buffer's.
+    pub fn delete(&mut self, range: ByteRange) {
         // Capture the exact bytes being removed FROM the buffer (never caller-
         // supplied) so the Deleted event's `removed` matches what is at `at`.
         // TODO(inc1+): `text()` allocates the whole rope to slice one run (O(n)
         // per delete). Add a `TextBuffer::slice(range) -> Cow<str>` over rope
         // chunks to preserve rope locality once documents get large.
-        let removed = self.buffer.text()[range.clone()].to_string();
+        let removed = self.buffer.text()[range.get()].to_string();
         let event = EditEvent::Deleted {
-            at: ByteOffset::new(range.start),
+            at: range.start,
             removed,
         };
         self.commit(event);
@@ -198,7 +210,12 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::offset::ByteOffset;
+    use crate::offset::{ByteOffset, ByteRange};
+
+    /// Convenience for tests: build a `ByteRange` from two raw byte indices.
+    fn br(start: usize, end: usize) -> ByteRange {
+        ByteRange::new(ByteOffset::new(start), ByteOffset::new(end))
+    }
 
     #[test]
     fn insert_records_undo_and_undo_restores() {
@@ -229,7 +246,7 @@ mod tests {
         // Arrange: "Hello world".
         let mut doc = Document::from_str("Hello world");
         // Act: delete " world" (bytes 5..11) — caller passes only the range.
-        doc.delete(5..11);
+        doc.delete(br(5, 11));
         // Assert: deletion took effect and undo restores byte-exactly, proving
         // `removed` was captured from the buffer (not from the caller).
         assert_eq!(doc.text(), "Hello");
@@ -283,7 +300,7 @@ mod tests {
         // Arrange: "x😀y" — "😀" occupies byte range 1..5 (4 UTF-8 bytes).
         let mut doc = Document::from_str("x😀y");
         // Act: delete the emoji cluster by byte range.
-        doc.delete(1..5);
+        doc.delete(br(1, 5));
         assert_eq!(doc.text(), "xy");
         // Assert: undo restores the multibyte cluster byte-exactly.
         assert!(doc.undo());

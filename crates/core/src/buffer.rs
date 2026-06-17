@@ -86,6 +86,15 @@ impl TextBuffer {
     ///
     /// Both bounds are converted from byte to char index with the same strict
     /// char-boundary check as [`insert`](Self::insert).
+    ///
+    /// This low-level storage primitive speaks a **raw `Range<usize>`** by design,
+    /// not the [`ByteRange`](crate::ByteRange) newtype (I1 decision: option a). The
+    /// newtype discipline belongs at the **aggregate front door**
+    /// ([`Document::delete`](crate::Document::delete)), which is the public mutation
+    /// API; the buffer is the storage layer (like `ropey` itself), where raw byte
+    /// ranges are appropriate and pushing the newtype down would be noise. The
+    /// `Document` converts `ByteRange` → `usize` at the call site via
+    /// [`ByteRange::get`](crate::ByteRange::get).
     pub fn delete(&mut self, range: std::ops::Range<usize>) {
         let char_start = self.byte_to_char_strict(range.start);
         let char_end = self.byte_to_char_strict(range.end);
