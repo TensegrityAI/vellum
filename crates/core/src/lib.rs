@@ -3,8 +3,10 @@
 
 mod buffer;
 mod lang_jinja;
+mod offset;
 mod token;
 
 pub use buffer::TextBuffer;
 pub use lang_jinja::tokenize;
+pub use offset::{ByteOffset, CharOffset, Utf16Offset};
 pub use token::{Token, TokenKind};
