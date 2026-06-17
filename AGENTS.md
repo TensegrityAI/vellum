@@ -46,7 +46,7 @@ built for tomorrow**, coherent with what `kineticrs` says to the world.
 The `kineticrs` worldview maps onto an editor:
 
 - The document is an **aggregate** (rope buffer + version).
-- Each keystroke is a **domain event** (`CharInserted`, `RangeDeleted`,
+- Each keystroke is a **domain event** (`Inserted`, `Deleted`, and a future
   `SelectionMoved`).
 - **Undo/redo = replay/reverse of events**, not an ad-hoc stack.
 - Time-travel and future collaboration (CRDT/OT) are extensions of the same

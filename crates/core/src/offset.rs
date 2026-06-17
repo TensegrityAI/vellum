@@ -120,12 +120,6 @@ impl ByteRange {
         Self { start, end }
     }
 
-    /// Construct a byte range from two [`ByteOffset`]s (alias of [`new`](Self::new)).
-    #[must_use]
-    pub const fn from_offsets(start: ByteOffset, end: ByteOffset) -> Self {
-        Self::new(start, end)
-    }
-
     /// The underlying raw `Range<usize>` (`start.get()..end.get()`).
     ///
     /// This is the storage-boundary escape hatch: hand the result to the rope /
@@ -199,14 +193,6 @@ mod tests {
         assert_eq!(r.start, ByteOffset::new(2));
         assert_eq!(r.end, ByteOffset::new(5));
         assert_eq!(r.get(), 2..5);
-    }
-
-    #[test]
-    fn byte_range_from_offsets_matches_new() {
-        assert_eq!(
-            ByteRange::from_offsets(ByteOffset::new(1), ByteOffset::new(4)),
-            ByteRange::new(ByteOffset::new(1), ByteOffset::new(4)),
-        );
     }
 
     #[test]

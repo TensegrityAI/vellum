@@ -41,6 +41,10 @@ impl Editor {
 
     /// Delete the `[start, end)` byte range. Panics on non-char-boundaries.
     pub fn delete(&mut self, start: usize, end: usize) {
+        // TODO(H2): route mutations through the Document aggregate
+        // (Document::delete(ByteRange)) so undo/redo + the typed front door apply
+        // to the JS boundary; consider a ByteRange::from_raw(usize,usize)
+        // convenience ctor then.
         self.buf.delete(start..end);
     }
 

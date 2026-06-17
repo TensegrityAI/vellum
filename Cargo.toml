@@ -14,3 +14,10 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# `wasm-pack build` ships the release profile to the browser. Enabling
+# overflow-checks there means an adversarial `at + removed.len()` in `event.rs`
+# PANICS on wraparound (per its documented contract, which H1 converts to a
+# Result at the wasm boundary) instead of silently wrapping in the shipped WASM.
+[profile.release]
+overflow-checks = true

@@ -197,6 +197,12 @@ impl TextBuffer {
     /// emoji family or a base+combining-mark pair moves as a unit, not by byte
     /// or `char`. Clamps to `0` at the start of the buffer (see CONTRACT).
     ///
+    /// # Panics
+    ///
+    /// Panics if `b` is not on a char boundary or is out of range: the backing
+    /// [`GraphemeCursor`] rejects such an offset. Callers pass a valid boundary
+    /// (the cursor only ever feeds in offsets it produced).
+    ///
     /// Implementation note: this materializes the buffer text via
     /// [`text`](Self::text) and uses a [`GraphemeCursor`] over it. For Inc 1
     /// that is correct and simple; a chunk-streaming cursor over the rope (to
@@ -221,6 +227,11 @@ impl TextBuffer {
     /// [`prev_grapheme_boundary`](Self::prev_grapheme_boundary): steps right by
     /// one grapheme cluster, clamping to the buffer length at the end (see
     /// CONTRACT). Same materialization tradeoff applies.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `b` is not on a char boundary or is out of range (the backing
+    /// [`GraphemeCursor`] rejects it); callers pass valid boundaries.
     pub fn next_grapheme_boundary(&self, b: ByteOffset) -> ByteOffset {
         let text = self.text();
         let len = text.len();
@@ -246,6 +257,10 @@ impl TextBuffer {
     ///
     /// Delegates segmentation to `unicode-segmentation`; the cursor only owns the
     /// boundary-selection logic, never re-implements word splitting.
+    ///
+    /// Unlike the grapheme-boundary methods, this tolerates an interior (non-
+    /// boundary) or out-of-range `b` without panicking: it always returns a valid
+    /// segment boundary (clamped to `[0, len]`).
     pub fn prev_word_boundary(&self, b: ByteOffset) -> ByteOffset {
         let text = self.text();
         let target = b.get();
@@ -267,6 +282,9 @@ impl TextBuffer {
     /// this returns `3` (the end of `"foo"`); from `3` it returns `4` (the end of
     /// the space run); from `4` it returns `7` (the end of `"bar"`). Stepping
     /// right past the end clamps to the buffer length (see CONTRACT).
+    ///
+    /// Like [`prev_word_boundary`](Self::prev_word_boundary), it tolerates an
+    /// interior or out-of-range `b` and always returns a valid boundary.
     pub fn next_word_boundary(&self, b: ByteOffset) -> ByteOffset {
         let text = self.text();
         let len = text.len();

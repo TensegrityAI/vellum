@@ -42,6 +42,10 @@ not the design.
 
 - Undo/redo, time-travel, and eventual CRDT/OT collaboration share one model; each
   is an extension, not a rewrite.
+- Increment 1 ships undo/redo via inverse-event **stacks** (an undo and a redo
+  `Vec<EditEvent>`), not yet a replayable append-only log; the durable event log
+  for time-travel and CRDT/OT collaboration arrives with the collaboration
+  increment, layered on the same event shape without changing event semantics.
 - The editor "breathes" the same event-sourced architecture as the Nexum backend,
   keeping the house signature coherent.
 - Inversion requires every event to retain the data needed to undo it (e.g. the
