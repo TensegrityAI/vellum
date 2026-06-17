@@ -469,6 +469,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "is out of bounds")]
+    fn char_to_byte_out_of_bounds_panics() {
+        // "hi" is 2 chars (len_chars == 2); char offset 99 is well past the end,
+        // tripping the OOB assert in char_to_byte (see CONTRACT).
+        let buf = TextBuffer::from_str("hi");
+        buf.char_to_byte(CharOffset::new(99));
+    }
+
+    #[test]
     fn astral_emoji_is_four_bytes_one_char_two_utf16_units() {
         // "😀" U+1F600: 4 UTF-8 bytes, 1 char, 2 UTF-16 code units (surrogate pair).
         let buf = TextBuffer::from_str("😀");
