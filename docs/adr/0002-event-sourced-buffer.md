@@ -11,7 +11,7 @@ related: [docs/plans/2026-06-15-vellum-design.md, docs/plans/2026-06-15-vellum-i
 
 Vellum inherits the `kineticrs` house worldview: **an edit is an event** (design
 §3). The document is an aggregate (rope buffer + version); each keystroke is a
-domain event (`CharInserted`, `RangeDeleted`, `SelectionMoved`). Undo/redo,
+domain event (`Inserted`, `Deleted`, and a future `SelectionMoved`). Undo/redo,
 time-travel, and future collaboration (CRDT/OT) are all natural extensions of one
 model rather than separate ad-hoc machinery.
 
@@ -45,7 +45,7 @@ not the design.
 - The editor "breathes" the same event-sourced architecture as the Nexum backend,
   keeping the house signature coherent.
 - Inversion requires every event to retain the data needed to undo it (e.g. the
-  deleted text on a `RangeDeleted`), a modest memory cost accepted for correctness.
+  deleted text on a `Deleted` event), a modest memory cost accepted for correctness.
 - Deferring snapshots keeps Increment 1 small; the cost is unbounded replay until
   snapshotting lands, acceptable for the document sizes Vellum targets.
 - The Increment 0 `String` buffer must be replaced, not extended — it is a

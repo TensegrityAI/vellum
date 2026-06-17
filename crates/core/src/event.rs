@@ -32,7 +32,12 @@ use crate::offset::ByteOffset;
 /// Offsets are **byte** offsets (UTF-8), matching the `TextBuffer` contract.
 /// `Deleted` stores the exact `removed` text so its inverse re-inserts byte-for
 /// byte — this is what makes undo lossless.
+///
+/// Marked `#[non_exhaustive]`: this enum is `pub` in an OSS-from-commit-one crate
+/// (ADR-0005) and is expected to grow (e.g. `SelectionMoved`, future CRDT/OT
+/// events per ADR-0002), so downstream matchers must carry a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditEvent {
     /// `text` was inserted at byte offset `at`.
     Inserted {
