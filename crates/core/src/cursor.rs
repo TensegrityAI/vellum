@@ -245,6 +245,81 @@ mod tests {
     }
 
     #[test]
+    fn extend_left_grows_selection_keeping_anchor() {
+        // Caret at the end of "abc" (byte 3); extend_left twice grows the
+        // selection leftward while the anchor stays pinned at 3.
+        let buf = TextBuffer::from_str("abc");
+        let mut sel = Selection::caret(ByteOffset(3));
+        sel.extend_left(&buf);
+        sel.extend_left(&buf);
+        assert_eq!(sel.anchor, ByteOffset(3));
+        assert_eq!(sel.head, ByteOffset(1));
+        assert!(!sel.is_empty());
+        assert_eq!(sel.range(), 1..3);
+    }
+
+    #[test]
+    fn extend_left_can_shrink_then_cross_anchor() {
+        // Start with a forward selection 2..4 (anchor 2, head 4). extend_left
+        // shrinks the head back toward the anchor, then crosses below it: the
+        // head ends up < anchor and start/end re-normalize to the new order.
+        let buf = TextBuffer::from_str("abcdef");
+        let mut sel = Selection::new(ByteOffset(2), ByteOffset(4));
+        sel.extend_left(&buf); // head 4 -> 3
+        sel.extend_left(&buf); // head 3 -> 2 (now empty, at anchor)
+        sel.extend_left(&buf); // head 2 -> 1 (crosses the anchor)
+        assert_eq!(sel.anchor, ByteOffset(2));
+        assert_eq!(sel.head, ByteOffset(1));
+        assert!(sel.head < sel.anchor);
+        assert_eq!(sel.start(), ByteOffset(1));
+        assert_eq!(sel.end(), ByteOffset(2));
+    }
+
+    #[test]
+    fn extend_word_right_extends_selection_by_word() {
+        // "foo bar": caret at 0; extend_word_right moves only the head to the
+        // first segment edge after 0 (byte 3, end of "foo"), anchor stays 0.
+        let buf = TextBuffer::from_str("foo bar");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.extend_word_right(&buf);
+        assert_eq!(sel.anchor, ByteOffset(0));
+        assert_eq!(sel.head, ByteOffset(3));
+        assert!(!sel.is_empty());
+    }
+
+    #[test]
+    fn extend_word_left_from_end_extends_by_word() {
+        // "foo bar": caret at 7; extend_word_left moves only the head left by a
+        // word boundary (to byte 4, start of "bar"), anchor stays pinned at 7.
+        let buf = TextBuffer::from_str("foo bar");
+        let mut sel = Selection::caret(ByteOffset(7));
+        sel.extend_word_left(&buf);
+        assert_eq!(sel.anchor, ByteOffset(7));
+        assert_eq!(sel.head, ByteOffset(4));
+        assert!(!sel.is_empty());
+    }
+
+    #[test]
+    fn extend_left_at_start_is_noop() {
+        // At byte 0 there is nowhere left to go: the head stays at 0.
+        let buf = TextBuffer::from_str("abc");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.extend_left(&buf);
+        assert_eq!(sel.head, ByteOffset(0));
+        assert_eq!(sel.anchor, ByteOffset(0));
+    }
+
+    #[test]
+    fn extend_word_left_at_start_is_noop() {
+        // At byte 0 the word boundary clamps: the head stays at 0.
+        let buf = TextBuffer::from_str("foo bar");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.extend_word_left(&buf);
+        assert_eq!(sel.head, ByteOffset(0));
+        assert_eq!(sel.anchor, ByteOffset(0));
+    }
+
+    #[test]
     fn move_left_on_nonempty_selection_collapses_to_start() {
         // Selection 2..5; left-arrow collapses to the LEFT edge (2).
         let buf = TextBuffer::from_str("abcdefg");
