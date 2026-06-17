@@ -422,6 +422,25 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "falls inside a surrogate pair")]
+    fn utf16_to_byte_inside_surrogate_pair_panics() {
+        // "😀" is one astral char = 2 UTF-16 code units (a surrogate pair). Offset
+        // 1 lands BETWEEN the high and low surrogate, which is not a scalar-value
+        // boundary, so the round-trip assert must reject it (see CONTRACT).
+        let buf = TextBuffer::from_str("😀");
+        buf.utf16_to_byte(Utf16Offset(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "is out of bounds")]
+    fn utf16_to_byte_out_of_bounds_panics() {
+        // "😀" has len_utf16 == 2; offset 3 is past the end, exercising the OOB
+        // guard distinct from the surrogate-pair assert (see CONTRACT).
+        let buf = TextBuffer::from_str("😀");
+        buf.utf16_to_byte(Utf16Offset(3));
+    }
+
+    #[test]
     fn cjk_byte_char_utf16_lengths_and_round_trip() {
         // "日本語": 3 chars × 3 bytes = 9 bytes, 3 chars, 3 utf-16 units (BMP).
         let buf = TextBuffer::from_str("日本語");
