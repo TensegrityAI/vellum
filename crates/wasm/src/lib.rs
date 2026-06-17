@@ -31,7 +31,7 @@ impl Editor {
 
     /// Current buffer text.
     pub fn text(&self) -> String {
-        self.buf.text().to_string()
+        self.buf.text()
     }
 
     /// Insert `s` at byte offset `at`. Panics on a non-char-boundary `at`.
@@ -47,7 +47,7 @@ impl Editor {
     /// Tokens flattened as `[start, end, kind, start, end, kind, ...]`.
     /// Crosses to JS as a `Uint32Array`; no serde involved.
     pub fn tokens(&self) -> Vec<u32> {
-        tokenize(self.buf.text())
+        tokenize(&self.buf.text())
             .iter()
             .flat_map(|t| [t.start as u32, t.end as u32, t.kind as u32])
             .collect()
