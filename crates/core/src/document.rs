@@ -308,6 +308,74 @@ mod tests {
     }
 
     #[test]
+    fn interleaved_edit_undo_edit_redo_sequence() {
+        // Exercise the redo-rebuild / redo-clearing path across interleaved
+        // edits and undos. From "": type "a", type "b", undo, type "c" (which
+        // clears the redo branch), then undo back to empty.
+        let mut doc = Document::new();
+        doc.insert(ByteOffset::new(0), "a");
+        assert_eq!(doc.text(), "a");
+        doc.insert(ByteOffset::new(1), "b");
+        assert_eq!(doc.text(), "ab");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a");
+        // A new edit after the undo clears the redo future.
+        doc.insert(ByteOffset::new(1), "c");
+        assert_eq!(doc.text(), "ac");
+        assert!(!doc.redo());
+        assert_eq!(doc.text(), "ac");
+        // Walk the undo stack back to empty.
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "");
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn redo_after_partial_undo_replays_in_order() {
+        // Type "a","b","c" each at the end; undo twice back to "a"; redo twice
+        // forward to "abc". The replay must restore the edits in order.
+        let mut doc = Document::new();
+        doc.insert(ByteOffset::new(0), "a");
+        doc.insert(ByteOffset::new(1), "b");
+        doc.insert(ByteOffset::new(2), "c");
+        assert_eq!(doc.text(), "abc");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "ab");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a");
+        assert!(doc.redo());
+        assert_eq!(doc.text(), "ab");
+        assert!(doc.redo());
+        assert_eq!(doc.text(), "abc");
+    }
+
+    /// Pins the Increment-1 contract that `core` does **not** auto-rebase a
+    /// [`Selection`](crate::Selection) after a [`Document`] edit. This is by
+    /// design for Inc 1: a `Selection` is an immutable byte-offset pair that
+    /// knows nothing about subsequent document mutations. Rebasing cursor offsets
+    /// against an edit (so a caret after an upstream insert shifts forward) is the
+    /// responsibility of the **view layer** (Task I5; H2 owns the typed mutation
+    /// front door at the JS boundary), not of `core`. This test exists to catch a
+    /// regression where someone wires implicit rebasing into the aggregate — that
+    /// would contradict the audit and the Inc-1 contract.
+    #[test]
+    fn cursor_offsets_are_not_rebased_after_edit_inc1_contract() {
+        use crate::cursor::Selection;
+        // Arrange: doc "hello" with a caret at byte 5 (the end).
+        let mut doc = Document::from_str("hello");
+        let sel = Selection::caret(ByteOffset::new(5));
+        // Act: insert "XX" at the very start, shifting all later text right by 2.
+        doc.insert(ByteOffset::new(0), "XX");
+        assert_eq!(doc.text(), "XXhello");
+        // Assert: the Selection is UNCHANGED — head is still byte 5, NOT rebased
+        // to 7. Core does not auto-shift offsets; the view layer (I5) owns that.
+        assert_eq!(sel.head, ByteOffset::new(5));
+        assert_eq!(sel.anchor, ByteOffset::new(5));
+    }
+
+    #[test]
     fn can_undo_can_redo_reflect_state() {
         // Arrange: fresh document — nothing to undo or redo.
         let mut doc = Document::new();
