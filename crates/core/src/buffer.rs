@@ -213,4 +213,41 @@ mod tests {
         assert_eq!(buf.text(), block);
         assert_eq!(buf.len(), 3000);
     }
+
+    #[test]
+    fn delete_empty_range_is_noop() {
+        let mut buf = TextBuffer::from_str("Hello");
+        buf.delete(3..3); // start == end
+        assert_eq!(buf.text(), "Hello");
+    }
+
+    #[test]
+    fn insert_at_end_of_buffer_appends() {
+        let mut buf = TextBuffer::from_str("Hello");
+        buf.insert(buf.len(), "!"); // at == len()
+        assert_eq!(buf.text(), "Hello!");
+    }
+
+    #[test]
+    fn char_len_of_empty_buffer_is_zero() {
+        let buf = TextBuffer::new();
+        assert_eq!(buf.char_len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn insert_out_of_bounds_panics() {
+        // Past the end of the buffer: exercises the `try_byte_to_char` Err / OOB
+        // arm, distinct from the non-char-boundary assert.
+        let mut buf = TextBuffer::from_str("Hi");
+        buf.insert(999, "x");
+    }
+
+    #[test]
+    #[should_panic]
+    fn delete_out_of_bounds_panics() {
+        // The delete path runs the same OOB arm of `byte_to_char_strict`.
+        let mut buf = TextBuffer::from_str("Hi");
+        buf.delete(0..999);
+    }
 }
