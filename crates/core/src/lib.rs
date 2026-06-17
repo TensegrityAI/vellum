@@ -2,12 +2,14 @@
 #![forbid(unsafe_code)]
 
 mod buffer;
+mod document;
 mod event;
 mod lang_jinja;
 mod offset;
 mod token;
 
 pub use buffer::TextBuffer;
+pub use document::Document;
 pub use event::EditEvent;
 pub use lang_jinja::tokenize;
 pub use offset::{ByteOffset, CharOffset, Utf16Offset};
