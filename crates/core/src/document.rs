@@ -121,13 +121,22 @@ impl Document {
     /// the caller: this is the F4-review invariant that makes the resulting
     /// `Deleted` event well-formed by construction (see module docs). We slice the
     /// current text by the byte range — `text()` returns an owned `String`, so we
-    /// slice it and `.to_string()` the removed run. The range is validated by the
-    /// buffer's panic contract when the event is applied (a non-char-boundary or
-    /// out-of-bounds bound panics); slicing the `String` by the same byte range
-    /// enforces the boundary identically.
+    /// slice it and `.to_string()` the removed run.
+    ///
+    /// **Panic contract:** the byte range is validated by the **`str` slice** at
+    /// the point of capture below, with standard-library semantics — it panics if
+    /// either bound is not on a UTF-8 char boundary, if a bound is out of range,
+    /// **or if `range.start > range.end`** (inverted range). These three panic
+    /// shapes and their stdlib messages differ from `TextBuffer::delete`'s own
+    /// contract (the slice short-circuits before the buffer is ever touched).
+    /// Task H1, which converts these into a `Result` at the wasm boundary, must
+    /// validate against the *slice* semantics here, not the buffer's.
     pub fn delete(&mut self, range: Range<usize>) {
         // Capture the exact bytes being removed FROM the buffer (never caller-
         // supplied) so the Deleted event's `removed` matches what is at `at`.
+        // TODO(inc1+): `text()` allocates the whole rope to slice one run (O(n)
+        // per delete). Add a `TextBuffer::slice(range) -> Cow<str>` over rope
+        // chunks to preserve rope locality once documents get large.
         let removed = self.buffer.text()[range.clone()].to_string();
         let event = EditEvent::Deleted {
             at: ByteOffset::new(range.start),
