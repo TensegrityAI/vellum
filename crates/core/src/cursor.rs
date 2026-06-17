@@ -1,0 +1,314 @@
+//! Cursor and selection: a grapheme-aware caret over a [`TextBuffer`].
+//!
+//! A [`Selection`] is a pair of byte offsets into a buffer: an `anchor` (the
+//! fixed end) and a `head` (the moving end / caret). When `anchor == head` the
+//! selection is empty — it is just a caret. This is the standard editor model
+//! (the same one the DOM `Selection`/`Range` and CodeMirror use).
+//!
+//! ## Delegation, not duplication
+//!
+//! All grapheme- and word-boundary math is **delegated** to the [`TextBuffer`]
+//! primitives ([`TextBuffer::prev_grapheme_boundary`],
+//! [`TextBuffer::next_grapheme_boundary`], [`TextBuffer::prev_word_boundary`],
+//! [`TextBuffer::next_word_boundary`]). The cursor never instantiates a
+//! `GraphemeCursor` or calls `unicode-segmentation` itself — it owns only the
+//! anchor/head bookkeeping (collapse-vs-extend semantics), the buffer owns the
+//! Unicode segmentation (ADR-0001).
+//!
+//! ## Clamping contract
+//!
+//! Movement clamps at the buffer ends: the head never goes below `0` or above
+//! the buffer byte length. This falls out of the buffer primitives, which
+//! already clamp. Concretely, moving left at offset `0` is a no-op, and moving
+//! right at the buffer end is a no-op.
+//!
+//! ## Collapse semantics
+//!
+//! [`move_left`](Selection::move_left) / [`move_right`](Selection::move_right)
+//! are *collapse-or-move*: on a **non-empty** selection they collapse to the
+//! near edge (left-arrow → [`start`](Selection::start), right-arrow →
+//! [`end`](Selection::end)) without moving past it — the standard editor
+//! behavior. On an **empty** selection (a caret) they step the caret one
+//! grapheme. The `extend_*` variants instead move only the head, growing or
+//! shrinking the selection while the anchor stays put.
+
+use crate::buffer::TextBuffer;
+use crate::offset::ByteOffset;
+use std::ops::Range;
+
+/// A text selection: an `anchor` (fixed end) and a `head` (moving caret).
+///
+/// `anchor == head` means an empty selection (a bare caret). All offsets are
+/// **byte** offsets into the buffer the movement methods are called against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection {
+    /// The fixed end of the selection.
+    pub anchor: ByteOffset,
+    /// The moving end (the caret).
+    pub head: ByteOffset,
+}
+
+impl Selection {
+    /// Construct a selection from an explicit `anchor` and `head`.
+    ///
+    /// The two need not be ordered: `anchor` may be greater than `head` (a
+    /// "reversed" selection). [`start`](Self::start)/[`end`](Self::end)
+    /// normalize the order for range operations.
+    #[must_use]
+    pub const fn new(anchor: ByteOffset, head: ByteOffset) -> Self {
+        Self { anchor, head }
+    }
+
+    /// Construct an empty selection (a caret) at `at` (`anchor == head`).
+    #[must_use]
+    pub const fn caret(at: ByteOffset) -> Self {
+        Self {
+            anchor: at,
+            head: at,
+        }
+    }
+
+    /// Whether the selection is empty (just a caret, `anchor == head`).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.anchor.get() == self.head.get()
+    }
+
+    /// The lower (earlier) of `anchor` and `head` — the normalized range start.
+    #[must_use]
+    pub fn start(&self) -> ByteOffset {
+        ByteOffset::new(self.anchor.get().min(self.head.get()))
+    }
+
+    /// The higher (later) of `anchor` and `head` — the normalized range end.
+    #[must_use]
+    pub fn end(&self) -> ByteOffset {
+        ByteOffset::new(self.anchor.get().max(self.head.get()))
+    }
+
+    /// The selection as a byte `Range`, normalized (`start..end`).
+    ///
+    /// Useful directly for `delete`/render, which want an ordered byte range
+    /// regardless of selection direction.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.start().get()..self.end().get()
+    }
+
+    /// Drop the selection, keeping the caret at `head` (`anchor = head`).
+    pub fn collapse(&mut self) {
+        self.anchor = self.head;
+    }
+
+    /// Move the caret one grapheme left (collapse-or-move).
+    ///
+    /// If the selection is non-empty, collapse to [`start`](Self::start) (the
+    /// left edge) without stepping past it. Otherwise step the caret one
+    /// grapheme left via [`TextBuffer::prev_grapheme_boundary`]. Either way the
+    /// result is an empty selection (anchor == head). No-op at offset `0`.
+    pub fn move_left(&mut self, buf: &TextBuffer) {
+        if self.is_empty() {
+            self.head = buf.prev_grapheme_boundary(self.head);
+        } else {
+            self.head = self.start();
+        }
+        self.collapse();
+    }
+
+    /// Move the caret one grapheme right (collapse-or-move).
+    ///
+    /// The mirror of [`move_left`](Self::move_left): on a non-empty selection
+    /// collapse to [`end`](Self::end) (the right edge); otherwise step one
+    /// grapheme right via [`TextBuffer::next_grapheme_boundary`]. No-op at the
+    /// buffer end.
+    pub fn move_right(&mut self, buf: &TextBuffer) {
+        if self.is_empty() {
+            self.head = buf.next_grapheme_boundary(self.head);
+        } else {
+            self.head = self.end();
+        }
+        self.collapse();
+    }
+
+    /// Extend the selection one grapheme left: move only `head`, keep `anchor`.
+    ///
+    /// Grows or shrinks the selection depending on direction. No-op at `0`.
+    pub fn extend_left(&mut self, buf: &TextBuffer) {
+        self.head = buf.prev_grapheme_boundary(self.head);
+    }
+
+    /// Extend the selection one grapheme right: move only `head`, keep `anchor`.
+    ///
+    /// The mirror of [`extend_left`](Self::extend_left). No-op at the buffer end.
+    pub fn extend_right(&mut self, buf: &TextBuffer) {
+        self.head = buf.next_grapheme_boundary(self.head);
+    }
+
+    /// Move the caret to the previous word boundary, collapsing the selection.
+    ///
+    /// Delegates to [`TextBuffer::prev_word_boundary`] (UAX #29 segment edges;
+    /// see that method for the boundary convention). The result is an empty
+    /// selection at the boundary. No-op at offset `0`.
+    pub fn move_word_left(&mut self, buf: &TextBuffer) {
+        self.head = buf.prev_word_boundary(self.head);
+        self.collapse();
+    }
+
+    /// Move the caret to the next word boundary, collapsing the selection.
+    ///
+    /// Delegates to [`TextBuffer::next_word_boundary`]. No-op at the buffer end.
+    pub fn move_word_right(&mut self, buf: &TextBuffer) {
+        self.head = buf.next_word_boundary(self.head);
+        self.collapse();
+    }
+
+    /// Extend the selection to the previous word boundary (move only `head`).
+    pub fn extend_word_left(&mut self, buf: &TextBuffer) {
+        self.head = buf.prev_word_boundary(self.head);
+    }
+
+    /// Extend the selection to the next word boundary (move only `head`).
+    pub fn extend_word_right(&mut self, buf: &TextBuffer) {
+        self.head = buf.next_word_boundary(self.head);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::TextBuffer;
+    use crate::offset::ByteOffset;
+
+    #[test]
+    fn move_right_across_emoji_moves_one_grapheme() {
+        // "a👨‍👩‍👧b": the ZWJ family is ONE grapheme. From just after 'a' (byte 1),
+        // move_right must skip the WHOLE cluster and land right before 'b'.
+        let buf = TextBuffer::from_str("a👨‍👩‍👧b");
+        let cluster_len = "👨‍👩‍👧".len();
+        let mut sel = Selection::caret(ByteOffset(1));
+        sel.move_right(&buf);
+        assert_eq!(sel.head, ByteOffset(1 + cluster_len));
+        assert!(sel.is_empty());
+        // Sanity: it jumped by the full multi-char cluster, not one char.
+        assert!(cluster_len > 4);
+    }
+
+    #[test]
+    fn move_left_across_emoji_moves_one_grapheme() {
+        // Symmetric: from just before 'b', move_left lands right after 'a'.
+        let buf = TextBuffer::from_str("a👨‍👩‍👧b");
+        let cluster_len = "👨‍👩‍👧".len();
+        let mut sel = Selection::caret(ByteOffset(1 + cluster_len));
+        sel.move_left(&buf);
+        assert_eq!(sel.head, ByteOffset(1));
+        assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn move_right_over_cjk() {
+        // "日本語": each CJK char is 3 bytes; each move_right advances one char.
+        let buf = TextBuffer::from_str("日本語");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.move_right(&buf);
+        assert_eq!(sel.head, ByteOffset(3));
+        sel.move_right(&buf);
+        assert_eq!(sel.head, ByteOffset(6));
+        sel.move_right(&buf);
+        assert_eq!(sel.head, ByteOffset(9));
+    }
+
+    #[test]
+    fn extend_right_grows_selection_keeping_anchor() {
+        // Caret at 0; extend_right twice over ASCII → anchor 0, head 2.
+        let buf = TextBuffer::from_str("abcd");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.extend_right(&buf);
+        sel.extend_right(&buf);
+        assert_eq!(sel.anchor, ByteOffset(0));
+        assert_eq!(sel.head, ByteOffset(2));
+        assert!(!sel.is_empty());
+        assert_eq!(sel.range(), 0..2);
+    }
+
+    #[test]
+    fn move_left_on_nonempty_selection_collapses_to_start() {
+        // Selection 2..5; left-arrow collapses to the LEFT edge (2).
+        let buf = TextBuffer::from_str("abcdefg");
+        let mut sel = Selection::new(ByteOffset(2), ByteOffset(5));
+        sel.move_left(&buf);
+        assert_eq!(sel, Selection::caret(ByteOffset(2)));
+    }
+
+    #[test]
+    fn move_right_on_nonempty_selection_collapses_to_end() {
+        // Fresh selection 2..5; right-arrow collapses to the RIGHT edge (5).
+        let buf = TextBuffer::from_str("abcdefg");
+        let mut sel = Selection::new(ByteOffset(2), ByteOffset(5));
+        sel.move_right(&buf);
+        assert_eq!(sel, Selection::caret(ByteOffset(5)));
+    }
+
+    #[test]
+    fn move_left_at_start_is_noop() {
+        let buf = TextBuffer::from_str("abc");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.move_left(&buf);
+        assert_eq!(sel, Selection::caret(ByteOffset(0)));
+    }
+
+    #[test]
+    fn move_right_at_end_is_noop() {
+        let buf = TextBuffer::from_str("abc");
+        let mut sel = Selection::caret(ByteOffset(3));
+        sel.move_right(&buf);
+        assert_eq!(sel, Selection::caret(ByteOffset(3)));
+    }
+
+    #[test]
+    fn start_end_normalize_reversed_selection() {
+        // anchor > head: start/end/range must normalize the order.
+        let sel = Selection::new(ByteOffset(5), ByteOffset(2));
+        assert_eq!(sel.start(), ByteOffset(2));
+        assert_eq!(sel.end(), ByteOffset(5));
+        assert_eq!(sel.range(), 2..5);
+        assert!(!sel.is_empty());
+    }
+
+    #[test]
+    fn move_word_right_jumps_to_next_word_boundary() {
+        // "foo bar": from caret 0, move_word_right lands on the first segment END
+        // after 0, which is byte 3 (end of "foo"). See prev/next_word_boundary's
+        // documented split_word_bound_indices convention.
+        let buf = TextBuffer::from_str("foo bar");
+        let mut sel = Selection::caret(ByteOffset(0));
+        sel.move_word_right(&buf);
+        assert_eq!(sel.head, ByteOffset(3));
+        assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn move_word_left_from_end() {
+        // From the end of "foo bar" (7), move_word_left lands at the start of the
+        // final word "bar" (byte 4).
+        let buf = TextBuffer::from_str("foo bar");
+        let mut sel = Selection::caret(ByteOffset(7));
+        sel.move_word_left(&buf);
+        assert_eq!(sel.head, ByteOffset(4));
+        assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn caret_is_empty_and_collapse_drops_selection() {
+        let buf = TextBuffer::from_str("abcd");
+        let caret = Selection::caret(ByteOffset(2));
+        assert!(caret.is_empty());
+
+        let mut sel = Selection::new(ByteOffset(1), ByteOffset(3));
+        sel.collapse();
+        assert!(sel.is_empty());
+        assert_eq!(sel.head, ByteOffset(3));
+        assert_eq!(sel.anchor, ByteOffset(3));
+        // collapse keeps the head, no buffer needed (buf unused on purpose).
+        let _ = buf;
+    }
+}

@@ -1,6 +1,6 @@
 use crate::offset::{ByteOffset, CharOffset, Utf16Offset};
 use ropey::Rope;
-use unicode_segmentation::GraphemeCursor;
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 /// A rope-backed text buffer.
 ///
@@ -222,6 +222,55 @@ impl TextBuffer {
             Ok(None) => ByteOffset::new(len),
             Err(_) => ByteOffset::new(len),
         }
+    }
+
+    /// The byte offset of the nearest word boundary strictly **before** `b`.
+    ///
+    /// CONVENTION: word boundaries are the segment edges reported by
+    /// `unicode-segmentation`'s `split_word_bound_indices` (UAX #29 word
+    /// boundaries). For `"foo bar"` the boundaries are `{0, 3, 4, 7}` — i.e. the
+    /// edges of the runs `"foo"`, `" "`, `"bar"`. This method returns the
+    /// largest boundary `< b.get()`. Stepping left from the start clamps to `0`
+    /// (see CONTRACT). Note this is the *every-edge* convention (spaces are their
+    /// own segment), so word-stepping visits run boundaries including whitespace
+    /// edges, matching `split_word_bound_indices`.
+    ///
+    /// Delegates segmentation to `unicode-segmentation`; the cursor only owns the
+    /// boundary-selection logic, never re-implements word splitting.
+    pub fn prev_word_boundary(&self, b: ByteOffset) -> ByteOffset {
+        let text = self.text();
+        let target = b.get();
+        // The last segment edge strictly before `target`, else 0.
+        let prev = text
+            .split_word_bound_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i < target)
+            .last()
+            .unwrap_or(0);
+        ByteOffset::new(prev)
+    }
+
+    /// The byte offset of the nearest word boundary strictly **after** `b`.
+    ///
+    /// The forward counterpart of
+    /// [`prev_word_boundary`](Self::prev_word_boundary), using the same
+    /// `split_word_bound_indices` convention. For `"foo bar"` from offset `0`
+    /// this returns `3` (the end of `"foo"`); from `3` it returns `4` (the end of
+    /// the space run); from `4` it returns `7` (the end of `"bar"`). Stepping
+    /// right past the end clamps to the buffer length (see CONTRACT).
+    pub fn next_word_boundary(&self, b: ByteOffset) -> ByteOffset {
+        let text = self.text();
+        let len = text.len();
+        let target = b.get();
+        // The first segment END strictly after `target`. `split_word_bound_indices`
+        // yields segment START offsets, so a segment ending at `e` is the START of
+        // the following segment, or `len` for the final segment.
+        let next = text
+            .split_word_bound_indices()
+            .map(|(i, seg)| i + seg.len())
+            .find(|&e| e > target)
+            .unwrap_or(len);
+        ByteOffset::new(next.min(len))
     }
 }
 
@@ -513,5 +562,49 @@ mod tests {
         let buf = TextBuffer::new();
         assert_eq!(buf.prev_grapheme_boundary(ByteOffset(0)), ByteOffset(0));
         assert_eq!(buf.next_grapheme_boundary(ByteOffset(0)), ByteOffset(0));
+    }
+
+    // --- Word boundaries (Task F6 support) --------------------------------
+
+    #[test]
+    fn next_word_boundary_walks_segment_ends_of_foo_bar() {
+        // "foo bar": split_word_bound_indices runs are "foo"(0..3) " "(3..4)
+        // "bar"(4..7), so segment ENDS are {3,4,7}. next_word_boundary returns
+        // the first end strictly after the offset.
+        let buf = TextBuffer::from_str("foo bar");
+        assert_eq!(buf.next_word_boundary(ByteOffset(0)), ByteOffset(3));
+        assert_eq!(buf.next_word_boundary(ByteOffset(3)), ByteOffset(4));
+        assert_eq!(buf.next_word_boundary(ByteOffset(4)), ByteOffset(7));
+    }
+
+    #[test]
+    fn prev_word_boundary_walks_segment_starts_of_foo_bar() {
+        // Segment START boundaries are {0,3,4,7}; prev returns the largest
+        // boundary strictly before the offset.
+        let buf = TextBuffer::from_str("foo bar");
+        assert_eq!(buf.prev_word_boundary(ByteOffset(7)), ByteOffset(4));
+        assert_eq!(buf.prev_word_boundary(ByteOffset(4)), ByteOffset(3));
+        assert_eq!(buf.prev_word_boundary(ByteOffset(3)), ByteOffset(0));
+    }
+
+    #[test]
+    fn word_boundaries_clamp_at_buffer_ends() {
+        let buf = TextBuffer::from_str("foo bar");
+        // prev at start clamps to 0; next at end clamps to len.
+        assert_eq!(buf.prev_word_boundary(ByteOffset(0)), ByteOffset(0));
+        assert_eq!(buf.next_word_boundary(ByteOffset(7)), ByteOffset(7));
+    }
+
+    #[test]
+    fn word_boundaries_handle_multibyte_runs() {
+        // "café本" — 'é' is 2 bytes, '本' is 3 bytes. UAX#29 keeps the word run
+        // together; word boundaries land on real byte boundaries, never inside a
+        // multibyte char.
+        let buf = TextBuffer::from_str("café 本");
+        // From 0, next boundary is end of "café" (5 bytes: c,a,f,é=2).
+        assert_eq!(buf.next_word_boundary(ByteOffset(0)), ByteOffset(5));
+        // prev from len lands at the start of the final word "本" (after space).
+        let len = buf.len();
+        assert_eq!(buf.prev_word_boundary(ByteOffset(len)), ByteOffset(6));
     }
 }
