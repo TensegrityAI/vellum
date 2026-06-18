@@ -120,6 +120,17 @@ impl ByteRange {
         Self { start, end }
     }
 
+    /// Construct a byte range directly from two raw `usize` byte indices.
+    ///
+    /// A convenience over `ByteRange::new(ByteOffset::new(a), ByteOffset::new(b))`
+    /// for the WASM boundary, where the offsets arrive as bare `usize`s from JS
+    /// and the double-wrap would be noise. Like [`new`](Self::new), the two need
+    /// not be ordered; see [`ordered`](Self::ordered).
+    #[must_use]
+    pub const fn from_raw(start: usize, end: usize) -> Self {
+        Self::new(ByteOffset::new(start), ByteOffset::new(end))
+    }
+
     /// The underlying raw `Range<usize>` (`start.get()..end.get()`).
     ///
     /// This is the storage-boundary escape hatch: hand the result to the rope /
@@ -193,6 +204,20 @@ mod tests {
         assert_eq!(r.start, ByteOffset::new(2));
         assert_eq!(r.end, ByteOffset::new(5));
         assert_eq!(r.get(), 2..5);
+    }
+
+    #[test]
+    fn byte_range_from_raw_equals_explicit_construction() {
+        // The convenience ctor must be identical to the double-wrapped form.
+        assert_eq!(
+            ByteRange::from_raw(2, 5),
+            ByteRange::new(ByteOffset::new(2), ByteOffset::new(5)),
+        );
+        // And it preserves an inverted range verbatim, like `new`.
+        assert_eq!(
+            ByteRange::from_raw(5, 2),
+            ByteRange::new(ByteOffset::new(5), ByteOffset::new(2)),
+        );
     }
 
     #[test]

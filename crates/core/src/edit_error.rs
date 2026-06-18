@@ -38,6 +38,18 @@ pub enum EditError {
         /// The offending offset.
         offset: usize,
     },
+    /// A UTF-16 code-unit offset is in bounds but falls inside a surrogate pair
+    /// (i.e. it is not on a scalar-value boundary).
+    ///
+    /// Surfaced by the non-panicking UTF-16↔byte conversions
+    /// ([`TextBuffer::try_utf16_to_byte`](crate::TextBuffer::try_utf16_to_byte)):
+    /// the DOM/`EditContext` speak UTF-16, and an untrusted offset that splits an
+    /// astral surrogate pair must be rejected as a `Result`, never panic-trapped.
+    #[error("utf-16 offset {offset} falls inside a surrogate pair")]
+    NotCodeUnitBoundary {
+        /// The offending UTF-16 code-unit offset.
+        offset: usize,
+    },
     /// A delete range has `start > end`.
     #[error("range start {start} is greater than end {end}")]
     InvertedRange {

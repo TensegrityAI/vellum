@@ -300,6 +300,57 @@ impl TextBuffer {
         ByteOffset::new(self.rope.char_to_byte(char_idx))
     }
 
+    // --- Non-panicking UTF-16 ↔ byte conversions (Task H2) ----------------
+    //
+    // CONTRACT: these `try_*` variants VALIDATE an untrusted offset and return a
+    // typed [`EditError`] instead of panicking. The DOM / `<textarea>` /
+    // `EditContext` hand the view UTF-16 code-unit offsets that are untrusted (a
+    // mid-surrogate or out-of-range index must NOT trap across the WASM boundary —
+    // Increment 1 blocker #1). The panicking `byte_to_utf16`/`utf16_to_byte`
+    // above stay for trusted in-process callers.
+
+    /// Convert a UTF-8 byte offset to a UTF-16 code-unit offset, returning a
+    /// typed error instead of panicking on a bad offset.
+    ///
+    /// Returns [`EditError::OutOfBounds`] if `byte > len()`, or
+    /// [`EditError::NotCharBoundary`] if `byte` splits a multibyte scalar value;
+    /// otherwise the UTF-16 offset. Never panics for any input.
+    pub fn try_byte_to_utf16(&self, byte: usize) -> Result<usize, EditError> {
+        let len = self.rope.len_bytes();
+        if byte > len {
+            return Err(EditError::OutOfBounds { offset: byte, len });
+        }
+        if !self.is_char_boundary(byte) {
+            return Err(EditError::NotCharBoundary { offset: byte });
+        }
+        let char_idx = self.rope.byte_to_char(byte);
+        Ok(self.rope.char_to_utf16_cu(char_idx))
+    }
+
+    /// Convert a UTF-16 code-unit offset to a UTF-8 byte offset, returning a
+    /// typed error instead of panicking on a bad offset.
+    ///
+    /// Returns [`EditError::OutOfBounds`] if `utf16 > utf16_len()`, or
+    /// [`EditError::NotCodeUnitBoundary`] if `utf16` falls inside a surrogate
+    /// pair (i.e. is not a scalar-value boundary); otherwise the byte offset.
+    /// Never panics for any input — `ropey`'s `utf16_cu_to_char` would round a
+    /// mid-pair index, so the round-trip is asserted via a comparison, not a
+    /// panicking assert.
+    pub fn try_utf16_to_byte(&self, utf16: usize) -> Result<usize, EditError> {
+        let utf16_len = self.rope.len_utf16_cu();
+        if utf16 > utf16_len {
+            return Err(EditError::OutOfBounds {
+                offset: utf16,
+                len: utf16_len,
+            });
+        }
+        let char_idx = self.rope.utf16_cu_to_char(utf16);
+        if self.rope.char_to_utf16_cu(char_idx) != utf16 {
+            return Err(EditError::NotCodeUnitBoundary { offset: utf16 });
+        }
+        Ok(self.rope.char_to_byte(char_idx))
+    }
+
     /// The byte offset of the grapheme-cluster boundary at or before `b`.
     ///
     /// Steps left by one user-perceived grapheme cluster (ADR-0001), so a ZWJ
@@ -857,6 +908,49 @@ mod tests {
         let buf = TextBuffer::new();
         assert_eq!(buf.prev_grapheme_boundary(ByteOffset(0)), ByteOffset(0));
         assert_eq!(buf.next_grapheme_boundary(ByteOffset(0)), ByteOffset(0));
+    }
+
+    // --- Non-panicking UTF-16 ↔ byte conversions (Task H2) ----------------
+
+    #[test]
+    fn try_byte_to_utf16_round_trips_on_astral_text() {
+        // "a😀": a=0..1, 😀=1..5 (4 bytes / 1 char / 2 utf-16 code units).
+        let buf = TextBuffer::from_str("a😀");
+        assert_eq!(buf.try_byte_to_utf16(0), Ok(0));
+        assert_eq!(buf.try_byte_to_utf16(1), Ok(1)); // after 'a'
+        assert_eq!(buf.try_byte_to_utf16(5), Ok(3)); // after 😀 (1 + 2 surrogates)
+                                                     // Inverse round-trips.
+        assert_eq!(buf.try_utf16_to_byte(0), Ok(0));
+        assert_eq!(buf.try_utf16_to_byte(1), Ok(1));
+        assert_eq!(buf.try_utf16_to_byte(3), Ok(5));
+    }
+
+    #[test]
+    fn try_byte_to_utf16_rejects_out_of_bounds_and_mid_codepoint() {
+        // "café": len 5; 'é' spans 3..5, byte 4 is interior.
+        let buf = TextBuffer::from_str("café");
+        assert_eq!(
+            buf.try_byte_to_utf16(99),
+            Err(EditError::OutOfBounds { offset: 99, len: 5 })
+        );
+        assert_eq!(
+            buf.try_byte_to_utf16(4),
+            Err(EditError::NotCharBoundary { offset: 4 })
+        );
+    }
+
+    #[test]
+    fn try_utf16_to_byte_rejects_mid_surrogate_and_out_of_bounds() {
+        // "😀": utf16_len 2; offset 1 is between the high/low surrogate.
+        let buf = TextBuffer::from_str("😀");
+        assert_eq!(
+            buf.try_utf16_to_byte(1),
+            Err(EditError::NotCodeUnitBoundary { offset: 1 })
+        );
+        assert_eq!(
+            buf.try_utf16_to_byte(3),
+            Err(EditError::OutOfBounds { offset: 3, len: 2 })
+        );
     }
 
     // --- Word boundaries (Task F6 support) --------------------------------
