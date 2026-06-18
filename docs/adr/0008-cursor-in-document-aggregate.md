@@ -77,11 +77,22 @@ source of truth.
   offset adjustment the aggregate makes is:
   - the cursor-aware edit methods (`insert_at_cursor`/`delete_selection`/…) set the
     caret to the edit's natural post-edit position (standard editor behavior), and
-  - after **any** edit the selection is **clamped** to `0..=len()` so the caret can
-    never dangle past the end of the buffer (a `clamp_selection` helper). Clamping
-    is a safety floor (it prevents a later out-of-range slice panic when the view
-    reads the caret), not semantic rebasing: an in-range caret is left untouched, so
-    the not-auto-rebased contract holds.
+  - after **any** edit the selection is **snapped** so each end is in range **and
+    on a UTF-8 char boundary** (a `clamp_selection` helper, backed by
+    `TextBuffer::floor_char_boundary`). This is a safety floor with two guarantees:
+    the caret can never dangle past the end of the buffer (no later out-of-range
+    slice panic when the view reads it), **and** it can never point mid-codepoint.
+    The boundary guarantee closes a latent WASM trap (H2a review): an edit that
+    shifts a multibyte char under a previously-valid caret used to leave the offset
+    interior to that codepoint, and the next grapheme step would panic inside
+    `GraphemeCursor`. Snapping is **not** semantic rebasing: a caret already in
+    range and on a boundary is left untouched, so the not-auto-rebased contract
+    holds.
+- **Type-over-a-selection records two history entries.** `insert_at_cursor` over a
+  non-empty selection emits a `Deleted` then an `Inserted` event, so it takes **two**
+  undos to fully revert. Single-step coalescing of a type-over into one undoable unit
+  is deferred to a later increment (consistent with the existing `TODO(inc1+)` insert-
+  coalescing note). This is the known UX behavior flagged in the H2a review.
 - `core` stays `#![forbid(unsafe_code)]`; this is a pure ownership/borrow change,
   no unsafe and no new dependency.
 - WASM exposure of the new cursor-intent surface is a **separate** task (H2b) and

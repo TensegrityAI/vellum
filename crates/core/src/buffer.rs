@@ -152,6 +152,30 @@ impl TextBuffer {
         }
     }
 
+    /// Snap `byte` **down** to the largest valid UTF-8 char boundary that is
+    /// `<= min(byte, len())`. Never panics for any input.
+    ///
+    /// This is the non-panicking counterpart used to make a possibly-interior
+    /// byte offset safe to hand to the grapheme primitives: a value far past the
+    /// end snaps to `len()` (always a boundary), and a value that splits a
+    /// multibyte scalar walks back to the START of that codepoint. Conventional
+    /// editor choice: floor TOWARD the start of the codepoint, so a caret that an
+    /// edit left mid-codepoint lands just before the affected character rather
+    /// than after it.
+    ///
+    /// The loop runs at most 3 times for well-formed UTF-8 (a scalar value is at
+    /// most 4 bytes, so an interior offset is at most 3 bytes past its boundary)
+    /// and uses the non-panicking [`is_char_boundary`](Self::is_char_boundary)
+    /// check, so it is safe for `core`'s `forbid(unsafe_code)` posture.
+    pub fn floor_char_boundary(&self, byte: usize) -> usize {
+        let mut b = byte.min(self.rope.len_bytes());
+        while !self.is_char_boundary(b) {
+            // `b == 0` is always a boundary, so this never underflows.
+            b -= 1;
+        }
+        b
+    }
+
     /// Validate an insertion point without mutating or panicking.
     ///
     /// Returns [`EditError::OutOfBounds`] if `at > len()`, or
@@ -553,6 +577,56 @@ mod tests {
         let buf = TextBuffer::from_str("hi");
         assert!(!buf.is_char_boundary(3));
         assert!(!buf.is_char_boundary(usize::MAX));
+    }
+
+    #[test]
+    fn floor_char_boundary_snaps_mid_codepoint_down() {
+        // "ab😀": a=0..1, b=1..2, 😀=2..6 (4 UTF-8 bytes). Interior bytes 3,4,5
+        // all floor to 2 (the START of the emoji); the boundaries floor to
+        // themselves.
+        let buf = TextBuffer::from_str("ab😀");
+        assert_eq!(buf.floor_char_boundary(2), 2); // on the boundary before 😀
+        assert_eq!(buf.floor_char_boundary(3), 2); // interior → start of 😀
+        assert_eq!(buf.floor_char_boundary(4), 2); // interior → start of 😀
+        assert_eq!(buf.floor_char_boundary(5), 2); // interior → start of 😀
+        assert_eq!(buf.floor_char_boundary(6), 6); // == len, a boundary (after 😀)
+    }
+
+    #[test]
+    fn floor_char_boundary_past_end_returns_len() {
+        // Anything past the end snaps to len() (always a boundary), never panics.
+        let buf = TextBuffer::from_str("ab😀"); // len 6
+        assert_eq!(buf.floor_char_boundary(6), 6);
+        assert_eq!(buf.floor_char_boundary(7), 6);
+        assert_eq!(buf.floor_char_boundary(usize::MAX), 6);
+    }
+
+    #[test]
+    fn floor_char_boundary_on_boundary_is_identity() {
+        // "café": boundaries at 0,1,2,3,5 ('é' spans 3..5). Each floors to itself;
+        // byte 4 (mid-'é') floors down to 3.
+        let buf = TextBuffer::from_str("café");
+        for b in [0usize, 1, 2, 3, 5] {
+            assert_eq!(buf.floor_char_boundary(b), b, "boundary {b}");
+        }
+        assert_eq!(buf.floor_char_boundary(4), 3); // interior of 'é' → 3
+    }
+
+    #[test]
+    fn floor_char_boundary_ascii_is_identity_everywhere() {
+        // Every byte of an ASCII string is a boundary.
+        let buf = TextBuffer::from_str("hello"); // len 5
+        for b in 0..=5 {
+            assert_eq!(buf.floor_char_boundary(b), b, "ascii byte {b}");
+        }
+    }
+
+    #[test]
+    fn floor_char_boundary_on_empty_buffer_is_zero() {
+        // Empty buffer: len 0; any input floors to 0, never panics.
+        let buf = TextBuffer::new();
+        assert_eq!(buf.floor_char_boundary(0), 0);
+        assert_eq!(buf.floor_char_boundary(99), 0);
     }
 
     #[test]

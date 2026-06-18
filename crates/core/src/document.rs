@@ -259,6 +259,13 @@ impl Document {
     /// If the selection is non-empty, the selected range is deleted first
     /// (recorded as its own [`EditEvent`]); then `text` is inserted at the
     /// selection start. Either way the caret collapses to `start + text.len()`.
+    ///
+    /// **Known UX behavior (inc 1):** typing over a non-empty selection records
+    /// **two** history entries — a `Deleted` then an `Inserted` — so it takes
+    /// **two** undos to fully revert (one to pull the typed text back out, one to
+    /// restore the replaced run). Single-step coalescing of a type-over into one
+    /// undoable unit is deferred to a later increment, consistent with the
+    /// `TODO(inc1+)` insert-coalescing note below.
     pub fn insert_at_cursor(&mut self, text: &str) {
         // Type-over: remove the selected run first, then insert at the start.
         if !self.selection.is_empty() {
@@ -313,22 +320,32 @@ impl Document {
             return false; // at the end, nothing to remove
         }
         self.delete(ByteRange::new(head, next));
-        // Caret stays at `head`; clamp guards against an edge case.
-        self.clamp_selection();
+        // Caret stays at `head` (the deletion removed text to its right, so the
+        // offset itself does not move). The `delete` above already ran
+        // `clamp_selection` via `commit`, so the caret is guaranteed in range and
+        // on a char boundary; no extra guard is needed here.
         true
     }
 
-    /// Clamp the selection's `anchor` and `head` into `0..=len()`.
+    /// Snap the selection's `anchor` and `head` so each is **in range AND on a
+    /// UTF-8 char boundary**.
     ///
     /// A safety floor (ADR-0008): after any edit the caret must not dangle past
-    /// the buffer end, or a later view read would slice out of range. This is
-    /// **not** semantic rebasing — an in-range caret is left untouched, so the
-    /// Inc-1 "offsets are not auto-rebased" contract still holds.
+    /// the buffer end *and* must not point mid-codepoint. An edit that shifts a
+    /// multibyte character under a previously-valid caret can leave the stored
+    /// offset interior to that codepoint; the next grapheme step would then panic
+    /// inside `GraphemeCursor` (a latent WASM trap). Snapping each end via
+    /// [`TextBuffer::floor_char_boundary`] subsumes the old magnitude clamp (it
+    /// floors to `min(byte, len())` first), so after this the internal caret is
+    /// **always** safe to feed to the grapheme primitives.
+    ///
+    /// This is **not** semantic rebasing — a caret that is already in range and on
+    /// a boundary is left untouched, so the Inc-1 "offsets are not auto-rebased"
+    /// contract still holds.
     fn clamp_selection(&mut self) {
-        let len = self.buffer.len();
-        let clamp = |b: ByteOffset| ByteOffset::new(b.get().min(len));
-        self.selection.anchor = clamp(self.selection.anchor);
-        self.selection.head = clamp(self.selection.head);
+        let snap = |b: ByteOffset| ByteOffset::new(self.buffer.floor_char_boundary(b.get()));
+        self.selection.anchor = snap(self.selection.anchor);
+        self.selection.head = snap(self.selection.head);
     }
 
     /// Apply a forward edit and record its inverse, clearing the redo branch.
@@ -656,6 +673,47 @@ mod tests {
         assert_eq!(doc.text(), "abc");
         assert!(doc.undo());
         assert_eq!(doc.text(), "ac");
+    }
+
+    #[test]
+    fn move_after_edit_that_shifts_multibyte_under_caret_does_not_panic() {
+        // CRITICAL regression (H2a review): an edit that shifts a multibyte char
+        // under a previously-valid caret used to leave the internal caret pointing
+        // MID-CODEPOINT (the old magnitude-only clamp did not snap to a char
+        // boundary), so the next grapheme step panicked inside GraphemeCursor —
+        // a latent WASM trap.
+        //
+        // "ab😀": a=0..1, b=1..2, 😀=2..6.
+        let mut doc = Document::from_str("ab😀");
+        doc.set_caret(ByteOffset::new(2)); // valid boundary, just before 😀
+                                           // Remove 'a' (0..1) → "b😀"; 😀 now occupies 1..5. The stored caret 2 is
+                                           // now INTERIOR to 😀. `delete` runs clamp_selection, which must snap the
+                                           // caret DOWN to byte 1 (the start of 😀).
+        doc.delete(br(0, 1));
+        assert_eq!(doc.text(), "b😀");
+        assert_eq!(doc.selection().head, ByteOffset::new(1)); // snapped to boundary
+        assert_eq!(doc.selection().anchor, ByteOffset::new(1));
+        // The move that previously panicked: from byte 1 (before 😀) move_right
+        // skips the whole emoji and lands at byte 5 (after 😀), at the end.
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(5));
+        // And a second move is a clean no-op at the end (still no panic).
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(5));
+    }
+
+    #[test]
+    fn insert_at_cursor_replaces_reversed_selection() {
+        use crate::cursor::Selection;
+        // Regression lock (H2a review): a REVERSED selection (head=1, anchor=3)
+        // over "aXXc" must type-over correctly via the ordered byte_range().
+        // insert_at_cursor("b") → "abc", caret collapsed at byte 2.
+        let mut doc = Document::from_str("aXXc");
+        doc.set_selection(Selection::new(ByteOffset::new(3), ByteOffset::new(1)));
+        doc.insert_at_cursor("b");
+        assert_eq!(doc.text(), "abc");
+        assert!(doc.selection().is_empty());
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
     }
 
     #[test]
