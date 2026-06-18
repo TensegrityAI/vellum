@@ -1,3 +1,4 @@
+use crate::edit_error::EditError;
 use crate::offset::{ByteOffset, CharOffset, Utf16Offset};
 use ropey::Rope;
 use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
@@ -122,6 +123,90 @@ impl TextBuffer {
             "byte offset {byte} is not on a UTF-8 char boundary",
         );
         char_idx
+    }
+
+    // --- Non-panicking boundary validation (Task H1) ----------------------
+    //
+    // CONTRACT: these helpers VALIDATE offsets without mutating and WITHOUT
+    // panicking for ANY input (including offsets far past `len()`). They are the
+    // untrusted-boundary guards: the WASM `Editor` (and the H2 `Document` path)
+    // call them BEFORE the panicking `insert`/`delete`, so a rejected op returns
+    // an `Err` and leaves the instance fully usable (no partial apply, no
+    // poisoning). The panicking primitives above stay as-is for trusted
+    // in-process callers.
+
+    /// Whether `byte` is a valid offset to edit at: in bounds (`0..=len()`) AND
+    /// on a UTF-8 char boundary.
+    ///
+    /// Never panics for any input — `byte > len()` simply returns `false`. Uses
+    /// `ropey`'s non-panicking `try_byte_to_char` and a `char_to_byte`
+    /// round-trip: an offset is a real boundary iff that round-trip is the
+    /// identity (`ropey` otherwise rounds a non-boundary index down).
+    pub fn is_char_boundary(&self, byte: usize) -> bool {
+        if byte > self.rope.len_bytes() {
+            return false;
+        }
+        match self.rope.try_byte_to_char(byte) {
+            Ok(char_idx) => self.rope.char_to_byte(char_idx) == byte,
+            Err(_) => false,
+        }
+    }
+
+    /// Validate an insertion point without mutating or panicking.
+    ///
+    /// Returns [`EditError::OutOfBounds`] if `at > len()`, or
+    /// [`EditError::NotCharBoundary`] if `at` splits a multibyte scalar value;
+    /// otherwise `Ok(())`. After `Ok`, [`insert`](Self::insert) at `at` cannot
+    /// panic.
+    pub fn validate_insert(&self, at: usize) -> Result<(), EditError> {
+        let len = self.rope.len_bytes();
+        if at > len {
+            return Err(EditError::OutOfBounds { offset: at, len });
+        }
+        if !self.is_char_boundary(at) {
+            return Err(EditError::NotCharBoundary { offset: at });
+        }
+        Ok(())
+    }
+
+    /// Validate a deletion range without mutating or panicking.
+    ///
+    /// Checks, in order: `start <= end` ([`EditError::InvertedRange`] else),
+    /// `end <= len()` ([`EditError::OutOfBounds`] else), and that both bounds sit
+    /// on char boundaries ([`EditError::NotCharBoundary`] else). After `Ok`,
+    /// [`delete`](Self::delete) over `start..end` cannot panic.
+    pub fn validate_delete(&self, start: usize, end: usize) -> Result<(), EditError> {
+        if start > end {
+            return Err(EditError::InvertedRange { start, end });
+        }
+        let len = self.rope.len_bytes();
+        // `end` is the larger bound (start <= end), so an in-bounds `end`
+        // implies an in-bounds `start`; check the binding bound.
+        if end > len {
+            return Err(EditError::OutOfBounds { offset: end, len });
+        }
+        if !self.is_char_boundary(start) {
+            return Err(EditError::NotCharBoundary { offset: start });
+        }
+        if !self.is_char_boundary(end) {
+            return Err(EditError::NotCharBoundary { offset: end });
+        }
+        Ok(())
+    }
+
+    /// Validate a deletion expressed as a start offset plus a **byte length**,
+    /// computing the end with [`usize::checked_add`] so an adversarial
+    /// `start + len` cannot wrap (F-1 defense — the Phase F audit flagged the
+    /// `at + removed.len()` arithmetic in `event.rs` as an overflow risk).
+    ///
+    /// Returns [`EditError::Overflow`] if `start + len` overflows `usize`,
+    /// otherwise defers to [`validate_delete`](Self::validate_delete) over
+    /// `start..start + len`. This is the natural front door for the diff-based
+    /// input path (Task I2) and the event-apply path, both of which derive an
+    /// end from a start and a removed length.
+    pub fn validate_delete_len(&self, start: usize, len: usize) -> Result<(), EditError> {
+        let end = start.checked_add(len).ok_or(EditError::Overflow)?;
+        self.validate_delete(start, end)
     }
 
     // --- Offset conversions (Task F3) -------------------------------------
@@ -447,6 +532,106 @@ mod tests {
         // The delete path runs the same OOB arm of `byte_to_char_strict`.
         let mut buf = TextBuffer::from_str("Hi");
         buf.delete(0..999);
+    }
+
+    // --- Non-panicking boundary validation (Task H1) ----------------------
+
+    #[test]
+    fn is_char_boundary_accepts_bounds_and_real_boundaries() {
+        // "café": boundaries at bytes 0,1,2,3,5 ('é' spans 3..5). Byte 4 is
+        // mid-'é'; byte 5 is the end (== len).
+        let buf = TextBuffer::from_str("café");
+        assert!(buf.is_char_boundary(0));
+        assert!(buf.is_char_boundary(3));
+        assert!(buf.is_char_boundary(5)); // == len
+        assert!(!buf.is_char_boundary(4)); // inside 'é'
+    }
+
+    #[test]
+    fn is_char_boundary_past_end_is_false_not_panic() {
+        // Must NOT panic for byte > len — just `false`.
+        let buf = TextBuffer::from_str("hi");
+        assert!(!buf.is_char_boundary(3));
+        assert!(!buf.is_char_boundary(usize::MAX));
+    }
+
+    #[test]
+    fn validate_insert_ok_at_valid_boundary() {
+        let buf = TextBuffer::from_str("café");
+        assert_eq!(buf.validate_insert(0), Ok(()));
+        assert_eq!(buf.validate_insert(3), Ok(()));
+        assert_eq!(buf.validate_insert(5), Ok(())); // at end (== len)
+    }
+
+    #[test]
+    fn validate_insert_out_of_bounds_returns_out_of_bounds() {
+        let buf = TextBuffer::from_str("hi"); // len 2
+        assert_eq!(
+            buf.validate_insert(99),
+            Err(EditError::OutOfBounds { offset: 99, len: 2 })
+        );
+    }
+
+    #[test]
+    fn validate_insert_inside_multibyte_returns_not_char_boundary() {
+        // "café": 'é' occupies bytes 3..5; byte 4 is its interior.
+        let buf = TextBuffer::from_str("café");
+        assert_eq!(
+            buf.validate_insert(4),
+            Err(EditError::NotCharBoundary { offset: 4 })
+        );
+    }
+
+    #[test]
+    fn validate_delete_ok_for_valid_range() {
+        let buf = TextBuffer::from_str("café"); // len 5
+        assert_eq!(buf.validate_delete(0, 5), Ok(()));
+        assert_eq!(buf.validate_delete(3, 5), Ok(()));
+        assert_eq!(buf.validate_delete(2, 2), Ok(())); // empty range
+    }
+
+    #[test]
+    fn validate_delete_inverted_returns_inverted_range() {
+        let buf = TextBuffer::from_str("hello");
+        assert_eq!(
+            buf.validate_delete(4, 1),
+            Err(EditError::InvertedRange { start: 4, end: 1 })
+        );
+    }
+
+    #[test]
+    fn validate_delete_out_of_bounds_returns_out_of_bounds() {
+        let buf = TextBuffer::from_str("hi"); // len 2
+        assert_eq!(
+            buf.validate_delete(0, 99),
+            Err(EditError::OutOfBounds { offset: 99, len: 2 })
+        );
+    }
+
+    #[test]
+    fn validate_delete_non_boundary_bound_returns_not_char_boundary() {
+        // "café": deleting up to byte 4 (mid-'é') must be rejected.
+        let buf = TextBuffer::from_str("café");
+        assert_eq!(
+            buf.validate_delete(0, 4),
+            Err(EditError::NotCharBoundary { offset: 4 })
+        );
+        // A non-boundary start is rejected too.
+        assert_eq!(
+            buf.validate_delete(4, 5),
+            Err(EditError::NotCharBoundary { offset: 4 })
+        );
+    }
+
+    #[test]
+    fn validate_delete_len_ok_and_overflow() {
+        let buf = TextBuffer::from_str("hello"); // len 5
+        assert_eq!(buf.validate_delete_len(1, 3), Ok(())); // 1..4
+                                                           // start + len overflows usize → Overflow, not a panic.
+        assert_eq!(
+            buf.validate_delete_len(usize::MAX, 1),
+            Err(EditError::Overflow)
+        );
     }
 
     // --- Offset conversions (Task F3) -------------------------------------
