@@ -273,6 +273,9 @@ impl Document {
         }
         let at = self.selection.start();
         self.insert(at, text);
+        // No `clamp_selection` needed: `at` is a clamped char boundary and exactly
+        // `text.len()` bytes were inserted there, so `at + text.len()` is itself a
+        // char boundary in range (it sits immediately after the inserted run).
         let caret = ByteOffset::new(at.get() + text.len());
         self.selection = Selection::caret(caret);
     }

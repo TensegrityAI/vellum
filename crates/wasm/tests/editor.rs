@@ -144,6 +144,44 @@ fn utf16_byte_conversion_roundtrips() {
 }
 
 #[wasm_bindgen_test]
+fn move_after_edit_that_shifts_multibyte_under_caret_does_not_trap() {
+    // H2a Critical, now locked at the JS boundary Phase H actually guards: an edit
+    // that shifts a multibyte char under a previously-valid caret used to leave the
+    // internal caret mid-codepoint, so the next mover trapped inside GraphemeCursor.
+    // The core fix snaps the caret DOWN to a char boundary after every edit.
+    //
+    // "ab😀": a=0..1, b=1..2, 😀=2..6.
+    let mut ed = Editor::new("ab😀");
+    ed.set_caret(2).unwrap(); // valid boundary, just before 😀
+    ed.delete(0, 1).unwrap(); // remove 'a' → "b😀"; 😀 now 1..5; internal caret 2
+                              // was mid-😀 → core clamps it DOWN to byte 1.
+    ed.move_right(); // MUST NOT trap: from byte 1 the mover skips the whole emoji.
+    assert_eq!(ed.text(), "b😀");
+    // "b😀": b=0..1, 😀=1..5 — move_right from byte 1 lands at byte 5 (after 😀).
+    assert_eq!(ed.cursor_head(), 5);
+}
+
+#[wasm_bindgen_test]
+fn backspace_on_empty_and_single_multibyte_does_not_trap() {
+    // Backspace at the very start of an empty buffer is a no-op, not a trap.
+    let mut empty = Editor::new("");
+    assert!(!empty.backspace());
+    assert_eq!(empty.text(), "");
+
+    // Single astral char: edits at its boundaries must not feed a mid-codepoint
+    // offset to the grapheme primitives.
+    let mut emoji = Editor::new("😀"); // 😀 = 0..4
+    emoji.set_caret(4).unwrap(); // valid boundary at the end
+    assert!(emoji.backspace()); // removes the whole grapheme, no trap
+    assert_eq!(emoji.text(), "");
+
+    let mut emoji2 = Editor::new("😀");
+    emoji2.set_caret(0).unwrap(); // valid boundary at the start
+    assert!(emoji2.delete_forward()); // forward-delete the whole grapheme, no trap
+    assert_eq!(emoji2.text(), "");
+}
+
+#[wasm_bindgen_test]
 fn set_caret_mid_codepoint_returns_err() {
     // "😀" occupies bytes 0..4; byte 1 is mid-codepoint.
     let mut ed = Editor::new("😀");
