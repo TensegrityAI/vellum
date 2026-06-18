@@ -6,6 +6,7 @@ mod cursor;
 mod document;
 mod event;
 mod lang_jinja;
+mod language;
 mod offset;
 mod token;
 
@@ -14,5 +15,6 @@ pub use cursor::Selection;
 pub use document::Document;
 pub use event::EditEvent;
 pub use lang_jinja::tokenize;
+pub use language::{Completion, CompletionKind, Diagnostic, Hover, Language, Severity};
 pub use offset::{ByteOffset, ByteRange, CharOffset, Utf16Offset};
 pub use token::{Token, TokenKind};
