@@ -1,0 +1,13 @@
+[package]
+name = "vellum-lang-jinja"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+vellum-core = { path = "../core" }

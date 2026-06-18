@@ -1,4 +1,12 @@
-use crate::{Token, TokenKind};
+//! The trivial Jinja2 byte scanner, extracted from `core` in Task G2.
+//!
+//! This is the underlying scanner the [`Jinja`](crate::Jinja) language plugin
+//! drives. It is a free function over `&str` (the shape the `core` module had)
+//! so it can be tested in isolation; [`Language::tokenize`](vellum_core::Language::tokenize)
+//! slices a range out of the document, runs this scanner, and re-offsets the
+//! result into whole-document coordinates (see [`crate`] docs).
+
+use vellum_core::{Token, TokenKind};
 
 /// Tokenize Jinja2-flavored `input` in a single O(n) left-to-right byte scan.
 ///
@@ -7,11 +15,11 @@ use crate::{Token, TokenKind};
 /// whose closing delimiter is missing runs to end-of-input. Spans are half-open
 /// byte ranges; a block's `end` is the byte just past its closing delimiter.
 ///
-/// This is a deliberately *trivial* tokenizer (Increment 0): delimiters inside a
-/// block body are **not** string-literal- or escape-aware, so `{{ "}}" }}` ends
-/// at the first inner `}}`. A real grammar arrives with the `lang-jinja` crate in
-/// Increment 2. The spans it emits are guaranteed gap-free, non-overlapping, and
-/// aligned to UTF-8 char boundaries — the contract the WASM token wire relies on.
+/// This is a deliberately *trivial* tokenizer (Increment 0/1): delimiters inside
+/// a block body are **not** string-literal- or escape-aware, so `{{ "}}" }}` ends
+/// at the first inner `}}`. A real grammar arrives in Increment 2. The spans it
+/// emits are guaranteed gap-free, non-overlapping, and aligned to UTF-8 char
+/// boundaries — the contract the WASM token wire relies on.
 pub fn tokenize(input: &str) -> Vec<Token> {
     let bytes = input.as_bytes();
     let len = bytes.len();
@@ -77,7 +85,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TokenKind;
+    use vellum_core::TokenKind;
 
     #[test]
     fn plain_text_is_one_text_token() {

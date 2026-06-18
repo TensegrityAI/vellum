@@ -10,7 +10,8 @@
 //! a panic traps and poisons this `Editor` instance (later calls also trap).
 //! Increment 1 should validate offsets and return `Result<_, JsError>` instead.
 
-use vellum_core::{tokenize, TextBuffer};
+use vellum_core::{ByteOffset, ByteRange, Language, TextBuffer};
+use vellum_lang_jinja::Jinja;
 use wasm_bindgen::prelude::*;
 
 /// JS-facing editor handle wrapping the pure-core [`TextBuffer`].
@@ -50,8 +51,15 @@ impl Editor {
 
     /// Tokens flattened as `[start, end, kind, start, end, kind, ...]`.
     /// Crosses to JS as a `Uint32Array`; no serde involved.
+    ///
+    /// Drives the [`Jinja`] language plugin (extracted to `vellum-lang-jinja` in
+    /// Task G2) over the **whole document** (`0..len`); `core` no longer knows
+    /// about Jinja2. The whole-doc range produces byte-for-byte the same tokens
+    /// the old in-core `tokenize(&buf.text())` did, so the wire is unchanged.
     pub fn tokens(&self) -> Vec<u32> {
-        tokenize(&self.buf.text())
+        let whole = ByteRange::new(ByteOffset::new(0), ByteOffset::new(self.buf.len()));
+        Jinja
+            .tokenize(&self.buf, whole)
             .iter()
             .flat_map(|t| [t.start as u32, t.end as u32, t.kind as u32])
             .collect()

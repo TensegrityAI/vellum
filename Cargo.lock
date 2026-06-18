@@ -295,10 +295,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "vellum-lang-jinja"
+version = "0.0.0"
+dependencies = [
+ "vellum-core",
+]
+
+[[package]]
 name = "vellum-wasm"
 version = "0.0.0"
 dependencies = [
  "vellum-core",
+ "vellum-lang-jinja",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]
