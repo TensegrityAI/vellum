@@ -30,6 +30,7 @@
 //! `Deleted` event well-formed by construction.
 
 use crate::buffer::TextBuffer;
+use crate::cursor::Selection;
 use crate::event::EditEvent;
 use crate::offset::{ByteOffset, ByteRange};
 
@@ -39,17 +40,35 @@ use crate::offset::{ByteOffset, ByteRange};
 /// ([`insert`](Self::insert), [`delete`](Self::delete)) records the inverse of the
 /// applied edit so the change can be reversed; [`undo`](Self::undo) and
 /// [`redo`](Self::redo) walk those stacks (ADR-0002).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Document {
     buffer: TextBuffer,
+    /// The single text [`Selection`] (caret) owned by this document. Defaults to
+    /// a caret at byte `0`. The aggregate is the navigation entry point: cursor
+    /// movement goes through the intent methods on `Document`, which delegate to
+    /// `Selection` using **disjoint field borrows** (`&self.buffer`, not the
+    /// `buffer()` getter — see ADR-0008). Inc 1 holds exactly one selection;
+    /// multi-cursor is deferred.
+    selection: Selection,
     /// Each entry is the INVERSE of an applied edit (most recent on top).
     undo: Vec<EditEvent>,
     /// Inverses of undone edits, ready to be re-applied (most recent on top).
     redo: Vec<EditEvent>,
 }
 
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            buffer: TextBuffer::default(),
+            selection: Selection::caret(ByteOffset::new(0)),
+            undo: Vec::new(),
+            redo: Vec::new(),
+        }
+    }
+}
+
 impl Document {
-    /// Create an empty document with empty history.
+    /// Create an empty document with empty history and a caret at byte `0`.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -58,12 +77,14 @@ impl Document {
     /// Create a document seeded with `s` and empty history.
     ///
     /// Named `from_str` to mirror [`TextBuffer::from_str`]; this is infallible
-    /// construction, not the fallible `std::str::FromStr` contract.
+    /// construction, not the fallible `std::str::FromStr` contract. The caret
+    /// starts at byte `0`.
     #[allow(clippy::should_implement_trait)]
     #[must_use]
     pub fn from_str(s: &str) -> Self {
         Self {
             buffer: TextBuffer::from_str(s),
+            selection: Selection::caret(ByteOffset::new(0)),
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -157,11 +178,165 @@ impl Document {
         self.commit(event);
     }
 
+    // --- Cursor: read + intent (ADR-0008) ---------------------------------
+
+    /// The current [`Selection`] (caret). `Selection` is `Copy`, so this returns
+    /// a snapshot the view can read freely; mutation goes through the intent
+    /// methods below.
+    #[must_use]
+    pub fn selection(&self) -> Selection {
+        self.selection
+    }
+
+    /// Replace the whole selection (e.g. the view pushing a drag-select).
+    ///
+    /// Clamped to `0..=len()` so an out-of-range span from the view can never
+    /// leave a dangling caret.
+    pub fn set_selection(&mut self, sel: Selection) {
+        self.selection = sel;
+        self.clamp_selection();
+    }
+
+    /// Collapse the selection to a bare caret at `at` (e.g. on a click).
+    ///
+    /// Clamped to `0..=len()`.
+    pub fn set_caret(&mut self, at: ByteOffset) {
+        self.selection = Selection::caret(at);
+        self.clamp_selection();
+    }
+
+    /// Drop the selection, keeping the caret at `head`.
+    pub fn collapse_selection(&mut self) {
+        self.selection.collapse();
+    }
+
+    /// Move the caret one grapheme left (collapse-or-move).
+    pub fn move_left(&mut self) {
+        // Disjoint field borrows: `&self.buffer` (the FIELD), not `self.buffer()`
+        // (the getter, which borrows all of `&self`) — see ADR-0008.
+        self.selection.move_left(&self.buffer);
+    }
+
+    /// Move the caret one grapheme right (collapse-or-move).
+    pub fn move_right(&mut self) {
+        self.selection.move_right(&self.buffer);
+    }
+
+    /// Extend the selection one grapheme left (move only `head`).
+    pub fn extend_left(&mut self) {
+        self.selection.extend_left(&self.buffer);
+    }
+
+    /// Extend the selection one grapheme right (move only `head`).
+    pub fn extend_right(&mut self) {
+        self.selection.extend_right(&self.buffer);
+    }
+
+    /// Move the caret to the previous word boundary, collapsing the selection.
+    pub fn move_word_left(&mut self) {
+        self.selection.move_word_left(&self.buffer);
+    }
+
+    /// Move the caret to the next word boundary, collapsing the selection.
+    pub fn move_word_right(&mut self) {
+        self.selection.move_word_right(&self.buffer);
+    }
+
+    /// Extend the selection to the previous word boundary (move only `head`).
+    pub fn extend_word_left(&mut self) {
+        self.selection.extend_word_left(&self.buffer);
+    }
+
+    /// Extend the selection to the next word boundary (move only `head`).
+    pub fn extend_word_right(&mut self) {
+        self.selection.extend_word_right(&self.buffer);
+    }
+
+    // --- Selection-aware editing (ADR-0008) -------------------------------
+
+    /// Type `text` at the cursor (standard type-over-selection behavior).
+    ///
+    /// If the selection is non-empty, the selected range is deleted first
+    /// (recorded as its own [`EditEvent`]); then `text` is inserted at the
+    /// selection start. Either way the caret collapses to `start + text.len()`.
+    pub fn insert_at_cursor(&mut self, text: &str) {
+        // Type-over: remove the selected run first, then insert at the start.
+        if !self.selection.is_empty() {
+            self.delete(self.selection.byte_range());
+        }
+        let at = self.selection.start();
+        self.insert(at, text);
+        let caret = ByteOffset::new(at.get() + text.len());
+        self.selection = Selection::caret(caret);
+    }
+
+    /// Delete the current selection, collapsing the caret to its start.
+    ///
+    /// Returns `true` if a (non-empty) selection was deleted, `false` if the
+    /// selection was empty (a bare caret) — in which case the caller decides the
+    /// backspace / forward-delete semantics.
+    pub fn delete_selection(&mut self) -> bool {
+        if self.selection.is_empty() {
+            return false;
+        }
+        let start = self.selection.start();
+        self.delete(self.selection.byte_range());
+        self.selection = Selection::caret(start);
+        true
+    }
+
+    /// Backspace: delete the selection if non-empty, else one grapheme left of
+    /// the caret. Returns `true` if anything was removed.
+    pub fn backspace(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        let head = self.selection.head;
+        let prev = self.buffer.prev_grapheme_boundary(head);
+        if prev == head {
+            return false; // at the start, nothing to remove
+        }
+        self.delete(ByteRange::new(prev, head));
+        self.selection = Selection::caret(prev);
+        true
+    }
+
+    /// Forward-delete: delete the selection if non-empty, else one grapheme to
+    /// the right of the caret. Returns `true` if anything was removed.
+    pub fn delete_forward(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
+        let head = self.selection.head;
+        let next = self.buffer.next_grapheme_boundary(head);
+        if next == head {
+            return false; // at the end, nothing to remove
+        }
+        self.delete(ByteRange::new(head, next));
+        // Caret stays at `head`; clamp guards against an edge case.
+        self.clamp_selection();
+        true
+    }
+
+    /// Clamp the selection's `anchor` and `head` into `0..=len()`.
+    ///
+    /// A safety floor (ADR-0008): after any edit the caret must not dangle past
+    /// the buffer end, or a later view read would slice out of range. This is
+    /// **not** semantic rebasing — an in-range caret is left untouched, so the
+    /// Inc-1 "offsets are not auto-rebased" contract still holds.
+    fn clamp_selection(&mut self) {
+        let len = self.buffer.len();
+        let clamp = |b: ByteOffset| ByteOffset::new(b.get().min(len));
+        self.selection.anchor = clamp(self.selection.anchor);
+        self.selection.head = clamp(self.selection.head);
+    }
+
     /// Apply a forward edit and record its inverse, clearing the redo branch.
     fn commit(&mut self, event: EditEvent) {
         self.buffer.apply(&event);
         self.undo.push(event.inverse());
         self.redo.clear();
+        self.clamp_selection();
     }
 
     // TODO(inc1+): optional coalescing of consecutive single-char inserts.
@@ -177,6 +352,7 @@ impl Document {
         };
         self.buffer.apply(&inv);
         self.redo.push(inv.inverse());
+        self.clamp_selection();
         true
     }
 
@@ -191,6 +367,7 @@ impl Document {
         };
         self.buffer.apply(&fwd);
         self.undo.push(fwd.inverse());
+        self.clamp_selection();
         true
     }
 
@@ -373,6 +550,112 @@ mod tests {
         // to 7. Core does not auto-shift offsets; the view layer (I5) owns that.
         assert_eq!(sel.head, ByteOffset::new(5));
         assert_eq!(sel.anchor, ByteOffset::new(5));
+    }
+
+    // --- H2a: cursor in the aggregate -------------------------------------
+
+    #[test]
+    fn move_right_advances_cursor_through_document() {
+        use crate::cursor::Selection;
+        // "ab😀c": 😀 is 4 UTF-8 bytes at 2..6. Stepping right from caret 0 must
+        // land on grapheme boundaries: a(1), b(2), 😀(6), c(7).
+        let mut doc = Document::from_str("ab😀c");
+        assert_eq!(doc.selection(), Selection::caret(ByteOffset::new(0)));
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(1));
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(6)); // skipped the emoji
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(7));
+        // No-op at the end.
+        doc.move_right();
+        assert_eq!(doc.selection().head, ByteOffset::new(7));
+    }
+
+    #[test]
+    fn insert_at_cursor_types_at_caret_and_advances() {
+        // "ac", caret at 1, type "b" → "abc", caret collapsed at 2.
+        let mut doc = Document::from_str("ac");
+        doc.set_caret(ByteOffset::new(1));
+        doc.insert_at_cursor("b");
+        assert_eq!(doc.text(), "abc");
+        assert!(doc.selection().is_empty());
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+    }
+
+    #[test]
+    fn insert_at_cursor_replaces_nonempty_selection() {
+        use crate::cursor::Selection;
+        // "aXXc", select "XX" (anchor 1, head 3), type "b" → "abc", caret at 2.
+        let mut doc = Document::from_str("aXXc");
+        doc.set_selection(Selection::new(ByteOffset::new(1), ByteOffset::new(3)));
+        doc.insert_at_cursor("b");
+        assert_eq!(doc.text(), "abc");
+        assert!(doc.selection().is_empty());
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+    }
+
+    #[test]
+    fn delete_selection_removes_and_collapses() {
+        use crate::cursor::Selection;
+        // "abc", select "b" (1..2): delete removes it, collapses caret to 1.
+        let mut doc = Document::from_str("abc");
+        doc.set_selection(Selection::new(ByteOffset::new(1), ByteOffset::new(2)));
+        assert!(doc.delete_selection());
+        assert_eq!(doc.text(), "ac");
+        assert!(doc.selection().is_empty());
+        assert_eq!(doc.selection().head, ByteOffset::new(1));
+        // On an empty selection, delete_selection is a no-op returning false.
+        assert!(!doc.delete_selection());
+        assert_eq!(doc.text(), "ac");
+    }
+
+    #[test]
+    fn cursor_intent_methods_use_disjoint_borrows() {
+        // Smoke test that the aggregate's cursor-intent methods compile (they use
+        // `&self.buffer`, not the `buffer()` getter) and behave.
+        let mut doc = Document::from_str("abcd");
+        doc.move_right(); // 0 -> 1
+        doc.move_right(); // 1 -> 2
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+        doc.move_left(); // 2 -> 1
+        assert_eq!(doc.selection().head, ByteOffset::new(1));
+        doc.extend_right(); // head 1 -> 2, anchor stays 1
+        assert_eq!(doc.selection().anchor, ByteOffset::new(1));
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+        assert!(!doc.selection().is_empty());
+        // collapse drops the selection back to a caret at head.
+        doc.collapse_selection();
+        assert!(doc.selection().is_empty());
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+    }
+
+    #[test]
+    fn selection_is_clamped_after_shortening_edit() {
+        // Caret near the end, then an explicit delete shrinks the buffer below the
+        // caret: the aggregate clamps the caret to the new length so it never
+        // dangles past the end (a later view read would otherwise slice OOB).
+        let mut doc = Document::from_str("abcdef");
+        doc.set_caret(ByteOffset::new(6));
+        doc.delete(br(2, 6)); // text -> "ab" (len 2), caret was 6
+        assert_eq!(doc.text(), "ab");
+        assert_eq!(doc.selection().head, ByteOffset::new(2));
+        assert_eq!(doc.selection().anchor, ByteOffset::new(2));
+    }
+
+    #[test]
+    fn insert_at_cursor_then_undo_restores_text() {
+        // Cursor-aware edits flow through the same history machinery: insert at the
+        // caret, then undo restores the text. (Inc 1 does NOT guarantee undo
+        // restores the caret; we assert text only — caret behavior is the view's.)
+        let mut doc = Document::from_str("ac");
+        doc.set_caret(ByteOffset::new(1));
+        doc.insert_at_cursor("b");
+        assert_eq!(doc.text(), "abc");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "ac");
     }
 
     #[test]
