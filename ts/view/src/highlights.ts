@@ -4,7 +4,7 @@
  * Custom Highlight API.
  *
  * The wire format is a flat `Uint32Array` of `[start, end, kind, ...]` triples
- * (kinds: 0=Text, 1=Variable, 2=Statement, 3=Comment).
+ * (HighlightKind, ADR-0009: 0=Text, 1=Variable, 2=Keyword, 3=Comment, …).
  */
 export function groupTokensByKind(
   flat: Uint32Array,

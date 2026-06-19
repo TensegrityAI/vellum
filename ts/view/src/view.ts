@@ -2,13 +2,13 @@ import type { Editor } from "../wasm/vellum.js";
 import { groupTokensByKind } from "./highlights.js";
 
 /**
- * Maps the core's `TokenKind` u32 to the CSS Custom Highlight registry name.
- * Kind 0 (Text) is intentionally absent — plain text is painted by the
- * surface's default color, not a highlight.
+ * Maps the core's `HighlightKind` u32 (ADR-0009) to the CSS Custom Highlight
+ * registry name. Kind 0 (Text) is intentionally absent — plain text is painted
+ * by the surface's default color, not a highlight.
  */
 const HIGHLIGHT_NAME_BY_KIND: Record<number, string> = {
   1: "vellum-variable",
-  2: "vellum-statement",
+  2: "vellum-keyword",
   3: "vellum-comment",
 };
 

@@ -40,7 +40,7 @@
   color: #7c5cff;
 }
 
-::highlight(vellum-statement) {
+::highlight(vellum-keyword) {
   color: #d08770;
 }
 
