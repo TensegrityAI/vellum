@@ -94,7 +94,7 @@ impl Language for Jinja {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vellum_core::{ByteOffset, ByteRange, Language, TextBuffer, TokenKind};
+    use vellum_core::{ByteOffset, ByteRange, HighlightKind, Language, TextBuffer};
 
     /// Whole-document convenience: the range every whole-doc caller (e.g. WASM)
     /// passes — `0..doc.len()`.
@@ -136,7 +136,7 @@ mod tests {
             vec![Token {
                 start: 7,
                 end: 14,
-                kind: TokenKind::Variable,
+                kind: HighlightKind::Variable,
             }]
         );
     }
@@ -159,7 +159,7 @@ mod tests {
             vec![Token {
                 start: 3,
                 end: 10,
-                kind: TokenKind::Variable,
+                kind: HighlightKind::Variable,
             }]
         );
     }

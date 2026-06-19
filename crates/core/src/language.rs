@@ -159,7 +159,7 @@ mod tests {
     use super::*;
     use crate::buffer::TextBuffer;
     use crate::offset::{ByteOffset, ByteRange};
-    use crate::token::{Token, TokenKind};
+    use crate::token::{HighlightKind, Token};
 
     /// A trivial in-test [`Language`] proving the trait is usable: it emits a
     /// single `Text` token spanning the requested range and relies on the default
@@ -171,7 +171,7 @@ mod tests {
             vec![Token {
                 start: range.start.get(),
                 end: range.end.get(),
-                kind: TokenKind::Text,
+                kind: HighlightKind::Text,
             }]
         }
     }
@@ -189,7 +189,7 @@ mod tests {
             vec![Token {
                 start: 0,
                 end: 5,
-                kind: TokenKind::Text,
+                kind: HighlightKind::Text,
             }]
         );
     }

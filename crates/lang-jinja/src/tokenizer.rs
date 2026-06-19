@@ -6,12 +6,12 @@
 //! slices a range out of the document, runs this scanner, and re-offsets the
 //! result into whole-document coordinates (see [`crate`] docs).
 
-use vellum_core::{Token, TokenKind};
+use vellum_core::{HighlightKind, Token};
 
 /// Tokenize Jinja2-flavored `input` in a single O(n) left-to-right byte scan.
 ///
 /// Recognizes `{{ }}` (variable), `{% %}` (statement), and `{# #}` (comment)
-/// blocks, emitting [`TokenKind::Text`] spans for everything in between. A block
+/// blocks, emitting [`HighlightKind::Text`] spans for everything in between. A block
 /// whose closing delimiter is missing runs to end-of-input. Spans are half-open
 /// byte ranges; a block's `end` is the byte just past its closing delimiter.
 ///
@@ -30,9 +30,9 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     while i < len {
         if bytes[i] == b'{' && i + 1 < len {
             let (kind, close) = match bytes[i + 1] {
-                b'{' => (TokenKind::Variable, b'}'),
-                b'%' => (TokenKind::Statement, b'%'),
-                b'#' => (TokenKind::Comment, b'#'),
+                b'{' => (HighlightKind::Variable, b'}'),
+                b'%' => (HighlightKind::Keyword, b'%'),
+                b'#' => (HighlightKind::Comment, b'#'),
                 _ => {
                     i += 1;
                     continue;
@@ -44,7 +44,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 tokens.push(Token {
                     start: text_start,
                     end: i,
-                    kind: TokenKind::Text,
+                    kind: HighlightKind::Text,
                 });
             }
 
@@ -75,7 +75,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
         tokens.push(Token {
             start: text_start,
             end: len,
-            kind: TokenKind::Text,
+            kind: HighlightKind::Text,
         });
     }
 
@@ -85,7 +85,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vellum_core::TokenKind;
+    use vellum_core::HighlightKind;
 
     #[test]
     fn plain_text_is_one_text_token() {
@@ -95,7 +95,7 @@ mod tests {
             vec![Token {
                 start: 0,
                 end: 5,
-                kind: TokenKind::Text
+                kind: HighlightKind::Text
             }]
         );
     }
@@ -109,17 +109,17 @@ mod tests {
                 Token {
                     start: 0,
                     end: 2,
-                    kind: TokenKind::Text
+                    kind: HighlightKind::Text
                 },
                 Token {
                     start: 2,
                     end: 9,
-                    kind: TokenKind::Variable
+                    kind: HighlightKind::Variable
                 },
                 Token {
                     start: 9,
                     end: 11,
-                    kind: TokenKind::Text
+                    kind: HighlightKind::Text
                 },
             ]
         );
@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn statement_and_comment_blocks() {
-        assert_eq!(tokenize("{% if x %}")[0].kind, TokenKind::Statement);
-        assert_eq!(tokenize("{# c #}")[0].kind, TokenKind::Comment);
+        assert_eq!(tokenize("{% if x %}")[0].kind, HighlightKind::Keyword);
+        assert_eq!(tokenize("{# c #}")[0].kind, HighlightKind::Comment);
     }
 
     #[test]
@@ -145,12 +145,12 @@ mod tests {
                 Token {
                     start: 0,
                     end: 5,
-                    kind: TokenKind::Variable
+                    kind: HighlightKind::Variable
                 },
                 Token {
                     start: 5,
                     end: 10,
-                    kind: TokenKind::Statement
+                    kind: HighlightKind::Keyword
                 },
             ]
         );
@@ -176,7 +176,7 @@ mod tests {
             vec![Token {
                 start: 0,
                 end: 4,
-                kind: TokenKind::Variable
+                kind: HighlightKind::Variable
             }]
         );
     }

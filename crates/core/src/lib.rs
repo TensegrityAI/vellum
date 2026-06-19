@@ -17,4 +17,4 @@ pub use edit_error::EditError;
 pub use event::EditEvent;
 pub use language::{Completion, CompletionKind, Diagnostic, Hover, Language, Severity};
 pub use offset::{ByteOffset, ByteRange, CharOffset, Utf16Offset};
-pub use token::{Token, TokenKind};
+pub use token::{HighlightKind, Token};
