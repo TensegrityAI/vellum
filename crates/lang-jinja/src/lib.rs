@@ -16,11 +16,12 @@
 //! re-tokenizes **only that range** rather than the whole document. The approach
 //! is pragmatic and correct for Inc 1:
 //!
-//! 1. Slice `doc.text()` to `range` (`&text[range.get()]`).
+//! 1. Slice the `range` out of the buffer with [`TextBuffer::slice`] (rope
+//!    `byte_slice`, not a whole-document materialization).
 //! 2. Run the whole-string [`tokenizer::tokenize`] scanner on the slice.
 //! 3. **Offset** every returned token's `start`/`end` by `range.start` so the
 //!    tokens are returned in **whole-document** byte coordinates, not relative to
-//!    the slice.
+//!    the slice (skipped when `range.start == 0`, where it is the identity).
 //!
 //! ### Contract / limitations
 //!
@@ -66,21 +67,29 @@ pub struct Jinja;
 impl Language for Jinja {
     /// Tokenize `doc`, restricted to `range`.
     ///
-    /// Re-tokenizes only the requested `range`: it slices `doc.text()` to the
-    /// range, runs the [`tokenize`] scanner on that slice, then re-offsets the
-    /// resulting tokens by `range.start` so they are in **whole-document** byte
-    /// coordinates. See the crate-level docs for the char-boundary requirement
-    /// and the Inc-1 block-split-at-edges limitation.
+    /// Re-tokenizes only the requested `range`: it slices the range out of the
+    /// buffer (via [`TextBuffer::slice`], rope `byte_slice` — not a whole-document
+    /// materialization, P4), runs the [`tokenize`] scanner on that slice, then
+    /// re-offsets the resulting tokens by `range.start` so they are in
+    /// **whole-document** byte coordinates. See the crate-level docs for the
+    /// char-boundary requirement and the Inc-1 block-split-at-edges limitation.
+    ///
+    /// When `range.start == 0` (the whole-document path the WASM binding sends)
+    /// the re-offset is the identity, so the scanner's tokens are returned
+    /// directly without allocating a second `Vec` (P4).
     ///
     /// # Panics
     ///
-    /// Panics if `range`'s bounds are not on UTF-8 char boundaries (the `&str`
-    /// slice panics), matching the [`TextBuffer`] offset contract.
+    /// Panics if `range`'s bounds are not on UTF-8 char boundaries (the slice
+    /// panics), matching the [`TextBuffer`] offset contract.
     fn tokenize(&self, doc: &TextBuffer, range: ByteRange) -> Vec<Token> {
-        let text = doc.text();
         let start = range.start.get();
-        let slice = &text[range.get()];
-        tokenize(slice)
+        let slice = doc.slice(range.get());
+        let tokens = tokenize(&slice);
+        if start == 0 {
+            return tokens;
+        }
+        tokens
             .into_iter()
             .map(|t| Token {
                 start: t.start + start,

@@ -42,6 +42,19 @@ use crate::buffer::TextBuffer;
 use crate::cursor::Selection;
 use crate::event::EditEvent;
 use crate::offset::{ByteOffset, ByteRange};
+use std::collections::VecDeque;
+
+/// Maximum number of undo entries retained (P3 audit fix).
+///
+/// The undo history is bounded so a long session, a scripted/agent edit loop, or
+/// paste-heavy use cannot grow it without limit (each entry owns its edited text).
+/// When a new edit would exceed this, the **oldest** entry is evicted: history
+/// past this depth is no longer reversible, the standard bounded-undo behavior.
+/// `redo` needs no separate cap — it can never exceed the number of available
+/// undos, which is itself bounded here. A snapshot/compaction scheme (ADR-0002)
+/// can refine this later; the cap is the honest Inc-1 floor against unbounded
+/// growth.
+const MAX_HISTORY: usize = 1000;
 
 /// An event-sourced text document with undo/redo.
 ///
@@ -59,8 +72,10 @@ pub struct Document {
     /// `buffer()` getter — see ADR-0008). Inc 1 holds exactly one selection;
     /// multi-cursor is deferred.
     selection: Selection,
-    /// Each entry is the INVERSE of an applied edit (most recent on top).
-    undo: Vec<EditEvent>,
+    /// Each entry is the INVERSE of an applied edit (most recent at the **back**).
+    /// A [`VecDeque`] so the oldest entry (front) can be evicted in O(1) when the
+    /// history hits [`MAX_HISTORY`]; undo/redo push/pop at the back.
+    undo: VecDeque<EditEvent>,
     /// Inverses of undone edits, ready to be re-applied (most recent on top).
     redo: Vec<EditEvent>,
 }
@@ -70,7 +85,7 @@ impl Default for Document {
         Self {
             buffer: TextBuffer::default(),
             selection: Selection::caret(ByteOffset::new(0)),
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             redo: Vec::new(),
         }
     }
@@ -94,7 +109,7 @@ impl Document {
         Self {
             buffer: TextBuffer::from_str(s),
             selection: Selection::caret(ByteOffset::new(0)),
-            undo: Vec::new(),
+            undo: VecDeque::new(),
             redo: Vec::new(),
         }
     }
@@ -362,7 +377,11 @@ impl Document {
     /// Apply a forward edit and record its inverse, clearing the redo branch.
     fn commit(&mut self, event: EditEvent) {
         self.buffer.apply(&event);
-        self.undo.push(event.inverse());
+        self.undo.push_back(event.inverse());
+        // Bound the history: evict the oldest entry once over the cap (P3).
+        if self.undo.len() > MAX_HISTORY {
+            self.undo.pop_front();
+        }
         self.redo.clear();
         self.clamp_selection();
     }
@@ -375,7 +394,7 @@ impl Document {
     /// Pops the inverse `inv` of the last edit, applies it, and pushes
     /// `inv.inverse()` (the reconstructed forward edit) onto the redo stack.
     pub fn undo(&mut self) -> bool {
-        let Some(inv) = self.undo.pop() else {
+        let Some(inv) = self.undo.pop_back() else {
             return false;
         };
         self.buffer.apply(&inv);
@@ -394,7 +413,7 @@ impl Document {
             return false;
         };
         self.buffer.apply(&fwd);
-        self.undo.push(fwd.inverse());
+        self.undo.push_back(fwd.inverse());
         self.clamp_selection();
         true
     }
@@ -725,6 +744,29 @@ mod tests {
         assert_eq!(doc.text(), "abc");
         assert!(doc.selection().is_empty());
         assert_eq!(doc.selection().head, ByteOffset::new(2));
+    }
+
+    #[test]
+    fn undo_history_is_capped_dropping_oldest() {
+        // P3 audit fix: the undo log is bounded. After MAX_HISTORY + N edits,
+        // only the most recent MAX_HISTORY are undoable; the N oldest are evicted
+        // (their text stays in the buffer, just not reversible).
+        let extra = 10;
+        let edits = MAX_HISTORY + extra;
+        let mut doc = Document::new();
+        for _ in 0..edits {
+            let end = ByteOffset::new(doc.len());
+            doc.insert(end, "a");
+        }
+        assert_eq!(doc.text().len(), edits);
+
+        let mut undone = 0;
+        while doc.undo() {
+            undone += 1;
+        }
+        assert_eq!(undone, MAX_HISTORY, "undo depth is capped at MAX_HISTORY");
+        // The `extra` oldest inserts had their history evicted, so they remain.
+        assert_eq!(doc.text().len(), extra);
     }
 
     #[test]
