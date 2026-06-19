@@ -40,8 +40,10 @@ typed errors; the only DOM-touching layer is the thin TypeScript view.
 
 ```
 crates/
-  core/        # PURE Rust. Text buffer, edits, tokenizer, layout arithmetic.
+  core/        # PURE Rust. Rope buffer, event-reified edits + undo/redo, cursor,
+               # offsets, the Language port + generic highlight vocabulary.
                # #![forbid(unsafe_code)]. Minimal deps. NO browser, NO WASM here.
+  lang-jinja/  # First Language plugin: the Jinja2 tokenizer behind core's port.
   wasm/        # wasm-bindgen bindings: expose core to JS. Emits token ranges.
 ts/
   view/        # Thin view: Highlight API + InputSource + layout. The only DOM layer.
@@ -49,7 +51,7 @@ ts/
 ```
 
 Dependency direction is strict and one-way — each layer depends only on the one to its
-left (outer depends on inner): `core ← wasm ← ts/view ← ts/react`.
+left (outer depends on inner): `core ← lang-jinja ← wasm ← ts/view ← ts/react`.
 `core` knows nothing about the browser or about prompts.
 
 ## Build & Run

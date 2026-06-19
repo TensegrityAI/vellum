@@ -6,7 +6,9 @@ members = ["crates/core", "crates/lang-jinja", "crates/wasm"]
 edition = "2021"
 rust-version = "1.89"
 license = "Apache-2.0"
-repository = "https://github.com/akaisys/vellum"
+# The public GitHub mirror (matches the `github` git remote). The Akaisys vs
+# TensegrityAI public identity is reconciled at the OSS flip (ADR-0005, Phase J).
+repository = "https://github.com/TensegrityAI/vellum"
 authors = ["Akaisys"]
 
 [workspace.lints.rust]

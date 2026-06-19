@@ -2,6 +2,10 @@
 yanked = "deny"
 
 [licenses]
+# Unicode-3.0 is REQUIRED: `unicode-ident` (pulled transitively via `proc-macro2`
+# in the proc-macro/derive build graph) is licensed `(MIT OR Apache-2.0) AND
+# Unicode-3.0`. Removing this allowance fails `cargo deny check`. Do not "clean
+# it up" — it is load-bearing, not stale.
 allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-3.0"]
 confidence-threshold = 0.9
 
