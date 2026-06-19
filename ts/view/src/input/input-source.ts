@@ -5,6 +5,12 @@
  * IME), `HiddenTextareaInput` (the everywhere fallback), and `FakeInput` (tests,
  * no DOM). The view is written once against this contract; feature detection at
  * the boundary picks the adapter.
+ *
+ * **Not frozen — composition-incomplete by design (until Task I5).** The Inc-1
+ * port covers value/selection edits (enough for Task I2's diff-based mutation).
+ * IME composition state and pushing character/control bounds back to the device
+ * (so the candidate window positions) are a deliberate Task-I5 addition that will
+ * *widen* this interface and all three adapters. Treat it as evolving until then.
  */
 
 /**

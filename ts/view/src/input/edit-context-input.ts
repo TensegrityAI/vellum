@@ -48,6 +48,12 @@ function editContextCtor(): EditContextConstructor | null {
  * composition decoration (character bounds for the IME candidate window) is a
  * later refinement (Task I5). DOM/IME wiring is verified in the demo on Chromium,
  * not the node-env unit tests.
+ *
+ * **Assumes single ownership of `target`** (one adapter per element) and keeps a
+ * local text mirror in lockstep with the EditContext buffer; `setValue` /
+ * `setSelection` update both. A `textupdate` whose range the mirror didn't expect
+ * (e.g. browser-coalesced composition) is a known Task-I5 concern, not handled
+ * here.
  */
 export class EditContextInput implements InputSource {
   readonly #target: HTMLElement;

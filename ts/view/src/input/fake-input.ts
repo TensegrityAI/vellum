@@ -16,7 +16,6 @@ export class FakeInput implements InputSource {
   #start: number;
   #end: number;
   #listener: InputListener | null = null;
-  #focused = false;
 
   constructor(initial = "") {
     this.#value = initial;
@@ -50,12 +49,7 @@ export class FakeInput implements InputSource {
   }
 
   focus(): void {
-    this.#focused = true;
-  }
-
-  /** Whether [`focus`](FakeInput.focus) has been called (test introspection). */
-  get focused(): boolean {
-    return this.#focused;
+    // No-op: focus is meaningless without a DOM device. Kept to satisfy the port.
   }
 
   dispose(): void {
