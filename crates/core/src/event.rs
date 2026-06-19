@@ -1,11 +1,17 @@
-//! Edit events: the event-sourced foundation (ADR-0002).
+//! Edit events: the reified-edit foundation (ADR-0002).
 //!
 //! In Vellum, **an edit is an event**. An [`EditEvent`] is the reified domain
-//! event for a single buffer mutation; the buffer's state is the result of
-//! applying an ordered sequence of these. Each event carries enough information
-//! to be **inverted exactly** — a [`EditEvent::Deleted`] retains the `removed`
-//! text — so undo/redo is reverse/replay of events (Task F5), not a separate
-//! ad-hoc stack.
+//! event for a single buffer mutation. Each event carries enough information to
+//! be **inverted exactly** — a [`EditEvent::Deleted`] retains the `removed`
+//! text — so undo/redo is reverse/replay of these events (Task F5), not a
+//! separate ad-hoc stack.
+//!
+//! **Honest scope (Increment 1):** the buffer's state is *not yet* derived by
+//! folding an event log — the rope is mutated in place and the
+//! [`Document`](crate::Document) keeps inverse-event undo/redo stacks. The
+//! event shape here is the durable unit a future append-only log will replay
+//! (time-travel, CRDT/OT) without semantic change (ADR-0002). Today its job is
+//! reified, exactly-reversible undo/redo.
 //!
 //! ## Apply contract
 //!

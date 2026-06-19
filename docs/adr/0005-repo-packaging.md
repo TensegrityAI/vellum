@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-15
 tags: [packaging, oss, governance, release]
 related: [docs/plans/2026-06-15-vellum-design.md, docs/adr/0002-event-sourced-buffer.md]

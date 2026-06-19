@@ -48,7 +48,11 @@ The `kineticrs` worldview maps onto an editor:
 - The document is an **aggregate** (rope buffer + version).
 - Each keystroke is a **domain event** (`Inserted`, `Deleted`, and a future
   `SelectionMoved`).
-- **Undo/redo = replay/reverse of events**, not an ad-hoc stack.
+- **Undo/redo = inverse-event stacks** today (Increment 1): each undo entry is a
+  reified `EditEvent` whose inverse is applied to reverse the edit. This is the
+  same event shape a durable, replayable append-only log will use later — the
+  collaboration/time-travel increment layers that log on top without changing
+  event semantics (ADR-0002). It is **not** yet "state = fold(events)".
 - Time-travel and future collaboration (CRDT/OT) are extensions of the same
   model, not a rewrite.
 

@@ -71,9 +71,9 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CompletionKind {
-    /// A variable (e.g. a host-injected Jinja2 variable).
+    /// A variable (e.g. a host-injected template variable).
     Variable,
-    /// A filter (e.g. a Jinja2 `| filter`).
+    /// A filter / pipe transform (language-defined, e.g. a `| filter`).
     Filter,
     /// A language keyword.
     Keyword,

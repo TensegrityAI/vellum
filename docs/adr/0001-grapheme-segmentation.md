@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-15
 tags: [core, unicode, segmentation]
 related: [docs/plans/2026-06-15-vellum-design.md, docs/adr/0004-measurement-port-and-arithmetic-layout.md]

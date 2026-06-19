@@ -1,10 +1,19 @@
-//! The [`Document`] aggregate: an event-sourced buffer with undo/redo.
+//! The [`Document`] aggregate: reified-event undo/redo over a text buffer.
 //!
 //! A `Document` wraps a [`TextBuffer`] and two stacks of [`EditEvent`]s. It is
 //! the **write side** of the editor: all mutations go through [`Document::insert`]
 //! and [`Document::delete`], which build the corresponding [`EditEvent`], apply it,
-//! and record its inverse on the undo stack. Undo/redo is then pure
-//! reverse/replay of those events (ADR-0002), not a separate ad-hoc mechanism.
+//! and record its inverse on the undo stack. Undo/redo is then reverse/replay of
+//! those reified events (ADR-0002), not a separate ad-hoc undo mechanism.
+//!
+//! **Honest scope (Increment 1):** this is *not yet* full event sourcing
+//! ("state = fold(events)"). State lives in the rope, which is mutated in place;
+//! the two `Vec<EditEvent>` are inverse-event undo/redo stacks, and events are
+//! discarded (popped, not retained) as they move across the stacks. The durable,
+//! replayable append-only log that time-travel and CRDT/OT collaboration need is
+//! layered on the *same* `EditEvent` shape in a later increment, without changing
+//! event semantics (ADR-0002 Consequences). What is genuinely event-shaped today:
+//! every mutation is a reified, exactly-invertible `EditEvent`.
 //!
 //! ## The undo/redo bookkeeping
 //!
