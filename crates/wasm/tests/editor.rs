@@ -111,13 +111,30 @@ fn cursor_movers_do_not_trap() {
     }
     assert_eq!(ed.cursor_head(), 0);
 
-    // Extend right then word-step — still no trap, offsets in range.
+    // Extend right by one grapheme: from caret 0 the head advances to byte 1
+    // (a no-op regression would now be caught — the old `<= 7` bound passed even
+    // if the mover did nothing). Anchor stays pinned at 0.
     ed.extend_right();
-    assert!(ed.cursor_head() <= 7);
+    assert_eq!(ed.cursor_head(), 1);
+    assert_eq!(ed.cursor_anchor(), 0);
+    // Word-step stays in range and never traps.
     ed.extend_word_right();
-    assert!(ed.cursor_head() <= 7);
+    assert!(ed.cursor_head() >= 1 && ed.cursor_head() <= 7);
     ed.collapse_selection();
     assert_eq!(ed.cursor_anchor(), ed.cursor_head());
+}
+
+#[wasm_bindgen_test]
+fn set_selection_validates_both_ends_and_keeps_instance_usable() {
+    // M-2 audit gap: set_selection (the only multi-validation setter) had no wasm
+    // test. "😀" is bytes 0..4 (utf16 len 2); byte 1 is mid-codepoint.
+    let mut ed = Editor::new("😀");
+    // A mid-codepoint head is rejected without poisoning the instance.
+    assert!(ed.set_selection(0, 1).is_err());
+    // Both ends on char boundaries: accepted, order preserved.
+    assert!(ed.set_selection(0, 4).is_ok());
+    assert_eq!(ed.cursor_anchor(), 0);
+    assert_eq!(ed.cursor_head(), 4);
 }
 
 #[wasm_bindgen_test]

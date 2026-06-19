@@ -269,6 +269,21 @@ mod tests {
     }
 
     #[test]
+    fn extend_right_over_zwj_family_jumps_whole_cluster_keeping_anchor() {
+        // I-5 audit gap: ZWJ family clusters were tested only in move_left/right,
+        // not extend_*. Shift+Arrow over an emoji family must grow the selection
+        // by the WHOLE grapheme, pinning the anchor.
+        let buf = TextBuffer::from_str("a👨‍👩‍👧b");
+        let cluster_len = "👨‍👩‍👧".len();
+        let mut sel = Selection::caret(ByteOffset(1)); // just after 'a'
+        sel.extend_right(&buf);
+        assert_eq!(sel.anchor, ByteOffset(1)); // anchor pinned
+        assert_eq!(sel.head, ByteOffset(1 + cluster_len)); // head jumped the family
+        assert!(!sel.is_empty());
+        assert!(cluster_len > 4); // genuinely a multi-char cluster
+    }
+
+    #[test]
     fn extend_left_grows_selection_keeping_anchor() {
         // Caret at the end of "abc" (byte 3); extend_left twice grows the
         // selection leftward while the anchor stays pinned at 3.

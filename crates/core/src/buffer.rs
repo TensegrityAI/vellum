@@ -990,6 +990,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn try_utf16_byte_round_trips_at_every_boundary_for_mixed_text() {
+        // I-4 audit gap: the blocker-1 round-trip on the NON-panicking `try_*`
+        // path (the one the WASM boundary calls) across astral + CJK + a
+        // combining mark, at EVERY char boundary. "a😀é本z" + U+0308 (combining
+        // diaeresis on the final z).
+        let buf = TextBuffer::from_str("a😀é本z\u{0308}");
+        let text = buf.text();
+        for (b, _) in text
+            .char_indices()
+            .chain(std::iter::once((text.len(), ' ')))
+        {
+            let u = buf
+                .try_byte_to_utf16(b)
+                .unwrap_or_else(|e| panic!("byte {b} should convert: {e}"));
+            assert_eq!(buf.try_utf16_to_byte(u), Ok(b), "round-trip at byte {b}");
+        }
+    }
+
+    #[test]
+    fn validate_delete_len_rejects_mid_codepoint_and_oob_end() {
+        // M-1 audit gap: validate_delete_len delegated to validate_delete, but the
+        // pass-through of the boundary/OOB errors was untested. "café": 'é' is
+        // 3..5, so start=0 len=4 lands the end mid-'é'.
+        let buf = TextBuffer::from_str("café");
+        assert_eq!(
+            buf.validate_delete_len(0, 4),
+            Err(EditError::NotCharBoundary { offset: 4 })
+        );
+        assert_eq!(
+            buf.validate_delete_len(0, 99),
+            Err(EditError::OutOfBounds { offset: 99, len: 5 })
+        );
+    }
+
     // --- Word boundaries (Task F6 support) --------------------------------
 
     #[test]
@@ -1019,6 +1054,26 @@ mod tests {
         // prev at start clamps to 0; next at end clamps to len.
         assert_eq!(buf.prev_word_boundary(ByteOffset(0)), ByteOffset(0));
         assert_eq!(buf.next_word_boundary(ByteOffset(7)), ByteOffset(7));
+    }
+
+    #[test]
+    fn word_boundaries_tolerate_interior_and_oob_offsets() {
+        // I-7 audit gap: the methods document "tolerates an interior (non-
+        // boundary) or out-of-range `b` without panicking," but every test passed
+        // valid ASCII boundaries. "café 本": 'é' is 3..5 (byte 4 is interior),
+        // len 9.
+        let buf = TextBuffer::from_str("café 本");
+        let len = buf.len();
+        // Interior offset (mid-'é') must not panic and returns a valid boundary.
+        let n = buf.next_word_boundary(ByteOffset::new(4));
+        assert!(buf.is_char_boundary(n.get()) && n.get() <= len);
+        // Out-of-range offsets clamp to a valid boundary, never panic.
+        assert_eq!(
+            buf.next_word_boundary(ByteOffset::new(usize::MAX)),
+            ByteOffset::new(len)
+        );
+        let p = buf.prev_word_boundary(ByteOffset::new(usize::MAX));
+        assert!(buf.is_char_boundary(p.get()) && p.get() <= len);
     }
 
     #[test]

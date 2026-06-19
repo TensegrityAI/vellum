@@ -157,6 +157,12 @@ impl ByteRange {
     }
 
     /// Whether the span is empty (`start == end`).
+    ///
+    /// **Inverted-range caveat (audit API-2):** for an inverted range
+    /// (`start > end`) this is `false`, yet [`len`](Self::len) saturates to `0` —
+    /// so `len() == 0` does **not** imply `is_empty()` for an inverted range.
+    /// The two agree only for an ordered range; normalize with
+    /// [`ordered`](Self::ordered) first if the direction is unknown.
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.start.get() == self.end.get()
@@ -265,6 +271,19 @@ mod tests {
         );
         assert_eq!(ordered.get(), 2..5);
         assert_eq!(ordered.len(), 3);
+    }
+
+    #[test]
+    fn byte_range_inverted_len_zero_but_not_empty_is_documented_divergence() {
+        // API-2 audit: pin the intentional disagreement so a future "fix" that
+        // silently unifies them is a visible, deliberate change. For an inverted
+        // range len() saturates to 0 while is_empty() is false.
+        let inv = ByteRange::new(ByteOffset::new(5), ByteOffset::new(2));
+        assert_eq!(inv.len(), 0);
+        assert!(!inv.is_empty());
+        // Normalizing makes them consistent with the actual span.
+        assert_eq!(inv.ordered().len(), 3);
+        assert!(!inv.ordered().is_empty());
     }
 
     #[test]

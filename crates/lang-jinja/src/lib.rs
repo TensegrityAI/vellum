@@ -174,6 +174,37 @@ mod tests {
     }
 
     #[test]
+    fn subrange_that_splits_a_block_tokenizes_partial_as_documented() {
+        // I-6 audit gap: the documented Inc-1 limitation (a range edge cutting a
+        // `{{ }}` block in half tokenizes the partial as an unterminated block
+        // running to the slice end) was never pinned. "aa {{ x }} bb", range
+        // 0..6 cuts mid-block at "aa {{ ".
+        let doc = TextBuffer::from_str("aa {{ x }} bb");
+        assert_eq!(&doc.text()[0..6], "aa {{ ");
+        let range = ByteRange::new(ByteOffset::new(0), ByteOffset::new(6));
+
+        let tokens = Jinja.tokenize(&doc, range);
+
+        // "aa " text (0..3), then the partial "{{ " as an unterminated Variable
+        // running to the slice end (6), NOT the whole {{ x }} block.
+        assert_eq!(
+            tokens,
+            vec![
+                Token {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Text,
+                },
+                Token {
+                    start: 3,
+                    end: 6,
+                    kind: HighlightKind::Variable,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn default_diagnostics_complete_hover_are_empty() {
         // Jinja relies on the Inc-1 default stubs for the other three methods.
         let doc = TextBuffer::from_str("{{ x }}");

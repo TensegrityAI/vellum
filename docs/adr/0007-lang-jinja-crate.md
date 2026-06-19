@@ -57,7 +57,10 @@ documented Increment-1 limitations are accepted deliberately:
 
 - `core` is language-agnostic: it depends on nothing Jinja-specific and exposes
   only the `Language` port plus token types. New languages are new crates, not
-  edits to the engine.
+  edits to the engine. (**Refined by ADR-0009:** this split moved the Jinja
+  *scanner* out but left a Jinja-shaped token *vocabulary* — `TokenKind`'s
+  `Variable/Statement/Comment` — in `core`; ADR-0009 replaces it with a generic
+  `HighlightKind` palette so the vocabulary is language-agnostic too.)
 - The workspace now has three lib crates (`core`, `lang-jinja`, `wasm`).
   `lang-jinja` has a single dependency, `vellum-core` (minimal-deps rule).
 - `lang-jinja` is `#![forbid(unsafe_code)]`, matching `core`; only `wasm` relaxes

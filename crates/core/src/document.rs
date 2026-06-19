@@ -770,6 +770,80 @@ mod tests {
     }
 
     #[test]
+    fn backspace_deletes_grapheme_left_and_moves_caret() {
+        // I-2 audit gap: backspace had no Document-level test. "a😀": a=0..1,
+        // 😀=1..5. Caret at the end backspaces the whole emoji grapheme.
+        let mut doc = Document::from_str("a😀");
+        doc.set_caret(ByteOffset::new(5));
+        assert!(doc.backspace());
+        assert_eq!(doc.text(), "a");
+        assert_eq!(doc.selection().head(), ByteOffset::new(1));
+        // Backspace again removes 'a'.
+        assert!(doc.backspace());
+        assert_eq!(doc.text(), "");
+        // At the start there is nothing to remove: no-op returning false.
+        assert!(!doc.backspace());
+        assert_eq!(doc.text(), "");
+    }
+
+    #[test]
+    fn delete_forward_removes_grapheme_right_and_keeps_caret() {
+        // I-1 audit gap: delete_forward had no Document-level test. "a😀b":
+        // a=0..1, 😀=1..5, b=5..6. From caret 1 it removes the emoji to the right
+        // and the caret stays at 1 (text was removed to its right).
+        let mut doc = Document::from_str("a😀b");
+        doc.set_caret(ByteOffset::new(1));
+        assert!(doc.delete_forward());
+        assert_eq!(doc.text(), "ab");
+        assert_eq!(doc.selection().head(), ByteOffset::new(1));
+        // At the end there is nothing to the right: no-op returning false.
+        doc.set_caret(ByteOffset::new(2));
+        assert!(!doc.delete_forward());
+        assert_eq!(doc.text(), "ab");
+    }
+
+    #[test]
+    fn document_word_movers_delegate_to_buffer() {
+        // I-3 audit gap: the aggregate's four word-movers were never called in a
+        // core test. "foo bar": segment edges at {0,3,4,7}.
+        let mut doc = Document::from_str("foo bar");
+        doc.set_caret(ByteOffset::new(0));
+        doc.move_word_right();
+        assert_eq!(doc.selection().head(), ByteOffset::new(3));
+        doc.move_word_right();
+        assert_eq!(doc.selection().head(), ByteOffset::new(4));
+        doc.move_word_left();
+        assert_eq!(doc.selection().head(), ByteOffset::new(3));
+        // extend_word_* move only the head, pinning the anchor.
+        doc.set_caret(ByteOffset::new(0));
+        doc.extend_word_right();
+        assert_eq!(doc.selection().anchor(), ByteOffset::new(0));
+        assert_eq!(doc.selection().head(), ByteOffset::new(3));
+        doc.set_caret(ByteOffset::new(7));
+        doc.extend_word_left();
+        assert_eq!(doc.selection().anchor(), ByteOffset::new(7));
+        assert_eq!(doc.selection().head(), ByteOffset::new(4));
+    }
+
+    #[test]
+    fn type_over_selection_takes_two_undos_to_revert() {
+        use crate::cursor::Selection;
+        // Pins the documented Inc-1 UX (ADR-0008): typing over a non-empty
+        // selection records a Deleted then an Inserted, so it takes TWO undos to
+        // fully revert. "aXXc", select "XX" (1..3), type "b" -> "abc".
+        let mut doc = Document::from_str("aXXc");
+        doc.set_selection(Selection::new(ByteOffset::new(1), ByteOffset::new(3)));
+        doc.insert_at_cursor("b");
+        assert_eq!(doc.text(), "abc");
+        // First undo pulls the typed "b" back out.
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "ac");
+        // Second undo restores the replaced "XX".
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "aXXc");
+    }
+
+    #[test]
     fn can_undo_can_redo_reflect_state() {
         // Arrange: fresh document — nothing to undo or redo.
         let mut doc = Document::new();
