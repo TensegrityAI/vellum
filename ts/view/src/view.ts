@@ -1,5 +1,6 @@
 import type { Editor } from "../wasm/vellum.js";
 import { groupTokensByKind } from "./highlights.js";
+import { createInputSource } from "./input/create-input-source.js";
 
 /**
  * Maps the core's `HighlightKind` u32 (ADR-0009) to the CSS Custom Highlight
@@ -15,20 +16,21 @@ const HIGHLIGHT_NAME_BY_KIND: Record<number, string> = {
 /**
  * Mount a Vellum editor surface into `host`.
  *
- * Increment 0 design:
+ * Design:
  * - The buffer text is rendered as a single text node inside `.vellum-surface`.
- * - A transparent `.vellum-input` textarea overlays the surface and is the
- *   `HiddenTextareaInput` adapter: it owns focus and captures typing.
+ * - Input is captured through the `InputSource` port (ADR-0003), chosen by
+ *   feature detection: `EditContextInput` on Chromium, else a hidden
+ *   `HiddenTextareaInput` overlay. The view never knows which is active.
  * - Highlighting is painted purely via the CSS Custom Highlight API — zero
  *   `<span>` per token — by building `Range`s over the surface text node.
  *
- * SHORTCUT (documented, Inc 0 only): on every `input` event we resync the core
- * to the textarea's full value via clear + reinsert, rather than diffing the
- * change. This is O(n) per keystroke and loses WASM event granularity, but it
- * is trivially correct and round-trips every edit through the Rust core.
- * Increment 1 replaces this with a real diff / EditContext adapter (ADR-0003).
+ * SHORTCUT (documented, until Task I2): on every input change we resync the core
+ * to the device's full value via clear + reinsert, rather than diffing. This is
+ * O(n) per keystroke and loses WASM event granularity, but is trivially correct
+ * and round-trips every edit through the Rust core. Task I2 replaces it with
+ * diff-based mutation (UTF-16 → byte conversion via the wasm helpers).
  *
- * @returns a disposer that removes the mounted DOM and clears highlights.
+ * @returns a disposer that releases the input source and clears highlights.
  */
 export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   host.replaceChildren();
@@ -37,34 +39,26 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   surface.className = "vellum-surface";
   const textNode = document.createTextNode("");
   surface.appendChild(textNode);
-
-  const input = document.createElement("textarea");
-  input.className = "vellum-input";
-  input.spellcheck = false;
-  input.autocapitalize = "off";
-  input.setAttribute("autocomplete", "off");
-  input.setAttribute("autocorrect", "off");
-  input.value = editor.text();
-
   host.appendChild(surface);
-  host.appendChild(input);
+
+  // Pick the input adapter by feature detection; the view holds only the port.
+  const input = createInputSource(host, surface, editor.text());
 
   const render = (): void => {
     textNode.data = editor.text();
     paintHighlights(textNode, editor.tokens());
   };
 
-  const onInput = (): void => {
-    syncCoreToValue(editor, input.value);
+  input.onChange((change) => {
+    syncCoreToValue(editor, change.value);
     render();
-  };
-
-  input.addEventListener("input", onInput);
+  });
 
   render();
+  input.focus();
 
   return () => {
-    input.removeEventListener("input", onInput);
+    input.dispose();
     clearHighlights();
     host.replaceChildren();
   };
