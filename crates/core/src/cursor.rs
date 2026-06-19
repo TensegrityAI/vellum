@@ -43,9 +43,16 @@ use std::ops::Range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
     /// The fixed end of the selection.
-    pub anchor: ByteOffset,
-    /// The moving end (the caret).
-    pub head: ByteOffset,
+    ///
+    /// `pub(crate)` (F/G/H audit, A4): the [`Document`](crate::Document) aggregate
+    /// owns the clamp-to-char-boundary invariant and reaches this field directly
+    /// (disjoint-field borrows, ADR-0008). External consumers read it via
+    /// [`anchor`](Self::anchor) and mutate only through the aggregate's intent
+    /// methods, so the invariant cannot be bypassed from outside `core`.
+    pub(crate) anchor: ByteOffset,
+    /// The moving end (the caret). `pub(crate)` for the same reason as
+    /// [`anchor`](Self::anchor); read it via [`head`](Self::head).
+    pub(crate) head: ByteOffset,
 }
 
 impl Selection {
@@ -66,6 +73,23 @@ impl Selection {
             anchor: at,
             head: at,
         }
+    }
+
+    /// The fixed end of the selection (the `anchor`).
+    ///
+    /// Read accessor for the `pub(crate)` field, so external consumers can
+    /// inspect the selection without the field being publicly mutable.
+    #[must_use]
+    pub const fn anchor(&self) -> ByteOffset {
+        self.anchor
+    }
+
+    /// The moving end of the selection (the `head` / caret).
+    ///
+    /// Read accessor for the `pub(crate)` field (see [`anchor`](Self::anchor)).
+    #[must_use]
+    pub const fn head(&self) -> ByteOffset {
+        self.head
     }
 
     /// Whether the selection is empty (just a caret, `anchor == head`).

@@ -18,6 +18,12 @@
 //! live on [`TextBuffer`](crate::TextBuffer), which owns the text and therefore
 //! the only correct mapping.
 //!
+//! The wrapped `usize` is **`pub(crate)`**, not `pub` (F/G/H audit, API-1): an
+//! external consumer must construct via `new` and read via `get`, so a raw
+//! `usize` of unknown provenance cannot be wrapped into the wrong offset space
+//! from outside `core`. Inside `core` the tuple field stays reachable (tests and
+//! conversions use it freely); the safety guarantee is about the *public* API.
+//!
 //! A *span* in byte space is a [`ByteRange`] (a pair of [`ByteOffset`]s) rather
 //! than a bare `Range<usize>`, for the same reason: the [`Document`](crate::Document)
 //! aggregate's delete API speaks `ByteRange` so a caller cannot accidentally hand
@@ -31,7 +37,7 @@ use std::ops::Range;
 /// The canonical internal address. `core`, `ropey`, and byte-oriented
 /// tokenizers all speak this space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ByteOffset(pub usize);
+pub struct ByteOffset(pub(crate) usize);
 
 impl ByteOffset {
     /// Construct a byte offset.
@@ -52,7 +58,7 @@ impl ByteOffset {
 /// `ropey` indexes by char natively, so this is the natural pivot space when
 /// converting between bytes and UTF-16 code units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CharOffset(pub usize);
+pub struct CharOffset(pub(crate) usize);
 
 impl CharOffset {
     /// Construct a char offset.
@@ -74,7 +80,7 @@ impl CharOffset {
 /// scalar values cost two UTF-16 code units (a surrogate pair) but one `char`,
 /// so this never equals [`CharOffset`] for text containing astral characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Utf16Offset(pub usize);
+pub struct Utf16Offset(pub(crate) usize);
 
 impl Utf16Offset {
     /// Construct a UTF-16 code-unit offset.

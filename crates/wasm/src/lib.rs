@@ -134,12 +134,12 @@ impl Editor {
     /// glue, so the two ends are exposed as bare offsets; the view reconstructs
     /// the selection from `cursor_anchor`/`cursor_head`.
     pub fn cursor_anchor(&self) -> usize {
-        self.doc.selection().anchor.get()
+        self.doc.selection().anchor().get()
     }
 
     /// The selection's `head` (moving caret) as a byte offset.
     pub fn cursor_head(&self) -> usize {
-        self.doc.selection().head.get()
+        self.doc.selection().head().get()
     }
 
     // --- Cursor: set (validated) ------------------------------------------
