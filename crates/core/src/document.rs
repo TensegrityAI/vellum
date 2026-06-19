@@ -176,10 +176,9 @@ impl Document {
     pub fn delete(&mut self, range: ByteRange) {
         // Capture the exact bytes being removed FROM the buffer (never caller-
         // supplied) so the Deleted event's `removed` matches what is at `at`.
-        // TODO(inc1+): `text()` allocates the whole rope to slice one run (O(n)
-        // per delete). Add a `TextBuffer::slice(range) -> Cow<str>` over rope
-        // chunks to preserve rope locality once documents get large.
-        let removed = self.buffer.text()[range.get()].to_string();
+        // Uses `TextBuffer::slice` (rope `byte_slice`) so only the removed run is
+        // read, not the whole document materialized (P1 audit fix).
+        let removed = self.buffer.slice(range.get()).into_owned();
         let event = EditEvent::Deleted {
             at: range.start,
             removed,

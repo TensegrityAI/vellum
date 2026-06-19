@@ -1,6 +1,7 @@
 use crate::edit_error::EditError;
 use crate::offset::{ByteOffset, CharOffset, Utf16Offset};
 use ropey::Rope;
+use std::borrow::Cow;
 use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 /// A rope-backed text buffer.
@@ -42,6 +43,30 @@ impl TextBuffer {
     /// `&str` should borrow the returned value (`&buf.text()`).
     pub fn text(&self) -> String {
         self.rope.to_string()
+    }
+
+    /// The text of the byte `range` as a [`Cow<str>`], without materializing the
+    /// whole document (P1: preserves rope locality).
+    ///
+    /// Reads the range via `ropey`'s `byte_slice` (O(log n) descent + the slice
+    /// length), not [`text`](Self::text) (which allocates the entire document).
+    /// When the slice falls inside a single rope chunk it is returned **borrowed**
+    /// (zero-copy); when it straddles chunks it is materialized into an owned
+    /// `String`. Either way only the requested range is touched, not the whole
+    /// buffer — the win that lets [`Document::delete`](crate::Document::delete)
+    /// capture the removed text cheaply.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either bound is out of range or not on a UTF-8 char boundary
+    /// (the same trusted-caller contract as [`delete`](Self::delete); `ropey`'s
+    /// `byte_slice` enforces it).
+    pub fn slice(&self, range: std::ops::Range<usize>) -> Cow<'_, str> {
+        let slice = self.rope.byte_slice(range);
+        match slice.as_str() {
+            Some(borrowed) => Cow::Borrowed(borrowed),
+            None => Cow::Owned(slice.to_string()),
+        }
     }
 
     /// Length of the buffer in **bytes** (UTF-8).
@@ -570,6 +595,18 @@ mod tests {
 
         assert_eq!(buf.text(), block);
         assert_eq!(buf.len(), 3000);
+    }
+
+    #[test]
+    fn slice_returns_subrange_text() {
+        // The rope-locality read path (P1): slice a byte range without
+        // materializing the whole document. ASCII, multibyte, and empty range.
+        let buf = TextBuffer::from_str("Hello world");
+        assert_eq!(buf.slice(5..11).as_ref(), " world");
+        let emoji = TextBuffer::from_str("x😀y"); // 😀 occupies bytes 1..5
+        assert_eq!(emoji.slice(1..5).as_ref(), "😀");
+        assert_eq!(emoji.slice(0..0).as_ref(), ""); // empty range
+        assert_eq!(emoji.slice(0..emoji.len()).as_ref(), "x😀y"); // whole doc
     }
 
     #[test]
