@@ -226,3 +226,57 @@ fn visible_lines_windows_the_viewport_across_the_boundary() {
     // Scrolled to 50px (mid line 2) → lines 2..6.
     assert_eq!(ed.visible_lines(50.0, 60.0, 20.0), vec![2, 6]);
 }
+
+#[wasm_bindgen_test]
+fn tokens_in_line_returns_line_local_utf16_triples() {
+    // "Hello {{ x }}": leading Text "Hello " (kind 0) then the Variable block
+    // (kind 1) at bytes 6..13. tokens_in_line reports every kind, as tokens() does;
+    // the view skips kind 0 (plain text needs no highlight).
+    let ed = Editor::new("Hello {{ x }}");
+    assert_eq!(ed.tokens_in_line(0), vec![0, 6, 0, 6, 13, 1]);
+}
+
+#[wasm_bindgen_test]
+fn tokens_in_line_offsets_are_relative_to_the_line_not_the_document() {
+    // Line 1 holds the block; its local offsets start at 0, not the global byte 2.
+    let ed = Editor::new("a\n{{ x }}");
+    assert_eq!(ed.tokens_in_line(0), vec![0, 1, 0]); // Text "a"
+    assert_eq!(ed.tokens_in_line(1), vec![0, 7, 1]); // Variable, line-local
+}
+
+#[wasm_bindgen_test]
+fn tokens_in_line_uses_utf16_columns_for_multibyte_lines() {
+    // "😀{{x}}": 😀 is Text and 2 UTF-16 units, so the block starts at local column 2.
+    let ed = Editor::new("😀{{x}}");
+    assert_eq!(ed.tokens_in_line(0), vec![0, 2, 0, 2, 7, 1]);
+}
+
+#[wasm_bindgen_test]
+fn tokens_in_line_clips_a_multiline_block_to_each_line() {
+    // A comment spanning two lines is clipped (newline excluded) on each line.
+    let ed = Editor::new("{# a\nb #}");
+    assert_eq!(ed.tokens_in_line(0), vec![0, 4, 3]); // "{# a"
+    assert_eq!(ed.tokens_in_line(1), vec![0, 4, 3]); // "b #}"
+}
+
+#[wasm_bindgen_test]
+fn tokens_in_line_past_the_end_is_empty() {
+    let ed = Editor::new("abc");
+    assert_eq!(ed.tokens_in_line(5), Vec::<u32>::new());
+}
+
+#[wasm_bindgen_test]
+fn tokens_in_line_on_an_empty_line_is_empty() {
+    // "a\n" → line 1 is empty (no content, no tokens), and must not underflow.
+    let ed = Editor::new("a\n");
+    assert_eq!(ed.tokens_in_line(1), Vec::<u32>::new());
+}
+
+#[wasm_bindgen_test]
+fn line_text_returns_a_line_without_its_break() {
+    let ed = Editor::new("ab\n日本\n");
+    assert_eq!(ed.line_text(0), "ab");
+    assert_eq!(ed.line_text(1), "日本");
+    assert_eq!(ed.line_text(2), ""); // trailing empty line
+    assert_eq!(ed.line_text(9), ""); // out of range
+}

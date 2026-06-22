@@ -10,9 +10,26 @@ async function main(): Promise<void> {
   const host = document.getElementById("app");
   if (host === null) throw new Error("missing #app host element");
 
-  const editor = new Editor(
-    "Hello {{ name }}, {# note #} {% if cond %}greeting{% endif %}",
-  );
+  // Multi-line, multibyte seed to exercise virtualization + highlighting + the
+  // UTF-16↔byte layout: enough lines to scroll, with emoji/CJK in the mix.
+  const seed = [
+    "Hello {{ name }} 😀,",
+    "{# a note that spans",
+    "   two lines #}",
+    "{% if cond %}",
+    "  日本語 {{ value }}",
+    "{% endif %}",
+    "",
+    "line 8",
+    "line 9",
+    "line 10 — {{ tail }}",
+    "line 11",
+    "line 12",
+    "line 13",
+    "line 14",
+    "line 15",
+  ].join("\n");
+  const editor = new Editor(seed);
 
   mountVellum(host, editor);
 

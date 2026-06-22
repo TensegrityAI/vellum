@@ -104,6 +104,43 @@ impl Editor {
             .collect()
     }
 
+    /// Tokens overlapping `line`, clipped to that line and expressed as
+    /// **line-local UTF-16** triples `[start, end, kind, ...]` (start/end measured
+    /// in UTF-16 code units from the line's first character, the trailing line
+    /// break excluded). Empty if `line` is out of range.
+    ///
+    /// The whole document is tokenized (a Jinja block may span lines), then each
+    /// token is clipped to the line and converted to UTF-16 here, so the
+    /// virtualized view can paint a line's highlights directly over that line's
+    /// own text node without any byte arithmetic of its own. Crosses to JS as a
+    /// `Uint32Array`.
+    pub fn tokens_in_line(&self, line: usize) -> Vec<u32> {
+        let buffer = self.doc.buffer();
+        if line >= buffer.line_count() {
+            return Vec::new();
+        }
+        // The line's content bounds (trailing break excluded) — the same source of
+        // truth the view renders, so highlights line up with the painted text.
+        let content = buffer.line_byte_range(line);
+        let line_start_u16 = buffer.byte_to_utf16(ByteOffset::new(content.start)).get();
+
+        // The whole document is tokenized (a Jinja block may span lines). Inc-1
+        // re-tokenizes per call; incremental re-lexing is a deferred perf item.
+        let whole = ByteRange::from_raw(0, self.doc.len());
+        let mut out = Vec::new();
+        for t in Jinja.tokenize(buffer, whole) {
+            let start = t.start.max(content.start);
+            let end = t.end.min(content.end);
+            if end <= start {
+                continue;
+            }
+            let start_u16 = buffer.byte_to_utf16(ByteOffset::new(start)).get() - line_start_u16;
+            let end_u16 = buffer.byte_to_utf16(ByteOffset::new(end)).get() - line_start_u16;
+            out.extend_from_slice(&[start_u16 as u32, end_u16 as u32, t.kind as u32]);
+        }
+        out
+    }
+
     // --- Layout (ADR-0004) -----------------------------------------------
     //
     // The view measures font metrics ONCE via its Canvas `MeasurePort` and asks
@@ -115,6 +152,18 @@ impl Editor {
     /// to size the virtualized scroll area.
     pub fn line_count(&self) -> usize {
         self.doc.buffer().line_count()
+    }
+
+    /// The text of `line` (0-based), without its trailing line break — the single
+    /// row the virtualized view renders. Empty string if `line` is out of range.
+    /// The view uses this instead of splitting the whole document, so its line model
+    /// and the core's (`line_count`/`visible_lines`/`tokens_in_line`) never diverge.
+    pub fn line_text(&self, line: usize) -> String {
+        let buffer = self.doc.buffer();
+        if line >= buffer.line_count() {
+            return String::new();
+        }
+        buffer.line_content(line).into_owned()
     }
 
     /// The half-open `[start, end)` line range to render for a viewport

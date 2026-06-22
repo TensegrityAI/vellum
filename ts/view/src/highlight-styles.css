@@ -6,28 +6,50 @@
  */
 
 .vellum-surface,
+.vellum-line,
 .vellum-input {
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
     monospace;
   font-size: 14px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
   tab-size: 2;
 }
 
+/* The scroll viewport. Only the visible lines live in `.vellum-content` below
+ * (virtualization), so this scrolls over a spacer sized to the whole document. */
 .vellum-surface {
   position: relative;
   margin: 0;
-  padding: 12px;
+  height: 100%;
+  overflow: auto;
   color: #c0c5ce;
+  outline: none;
 }
 
+/* Spacer: its height is set inline to `lineCount × lineHeight` so the scrollbar
+ * reflects the full document while only visible lines are rendered. */
+.vellum-content {
+  position: relative;
+}
+
+/* One logical line, absolutely positioned at `top = line × lineHeight`. No wrap:
+ * a line is exactly one row, keeping the grid exact; long lines scroll sideways. */
+.vellum-line {
+  position: absolute;
+  left: 0;
+  margin: 0;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+/* Hidden textarea fallback (non-Chromium). TODO(I5): its 12px content inset must
+ * be reconciled with the rendered line origin (lines start at top 0, padded 0 12px)
+ * so the fallback caret aligns with caret_pixel's (0,0) origin once I5 renders it. */
 .vellum-input {
   position: absolute;
   inset: 0;
   margin: 0;
-  padding: 12px;
+  padding: 0 12px;
   border: 0;
   resize: none;
   overflow: hidden;

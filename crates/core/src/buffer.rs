@@ -127,6 +127,32 @@ impl TextBuffer {
         self.rope.byte_to_line(byte)
     }
 
+    /// Byte range `[start, content_end)` of `line`'s content, **excluding** the
+    /// trailing line break — the single source of truth for "what one rendered row
+    /// covers", consumed by both the view (line text) and per-line tokenization.
+    ///
+    /// Increment 1 trims `\n` and `\r` (LF/CRLF); other Unicode line separators
+    /// `ropey` recognizes for [`line_count`](Self::line_count) are not trimmed, so
+    /// they would render literally — out of Inc-1's LF/CRLF scope.
+    ///
+    /// # Panics
+    /// Panics if `line >= line_count()` (trusted-caller contract).
+    pub fn line_byte_range(&self, line: usize) -> std::ops::Range<usize> {
+        let start = self.rope.line_to_byte(line);
+        let end = self.rope.line_to_byte(line + 1);
+        let content_end = start + self.slice(start..end).trim_end_matches(['\n', '\r']).len();
+        start..content_end
+    }
+
+    /// The text of `line`, without its trailing line break (see
+    /// [`line_byte_range`](Self::line_byte_range)). The view renders this as one row.
+    ///
+    /// # Panics
+    /// Panics if `line >= line_count()` (trusted-caller contract).
+    pub fn line_content(&self, line: usize) -> Cow<'_, str> {
+        self.slice(self.line_byte_range(line))
+    }
+
     /// Insert `s` at byte offset `at`. Panics if `at` is not a char boundary.
     ///
     /// The byte offset is converted to a `ropey` char index. `ropey`'s
@@ -1160,5 +1186,36 @@ mod tests {
         assert_eq!(buf.line_count(), 2);
         assert_eq!(buf.line_to_byte(1), ByteOffset(6));
         assert_eq!(buf.byte_to_line(6), 1);
+    }
+
+    #[test]
+    fn line_byte_range_excludes_the_trailing_newline() {
+        // "ab\ncd": line 0 content is "ab" (0..2), not "ab\n"; line 1 is "cd" (3..5).
+        let buf = TextBuffer::from_str("ab\ncd");
+        assert_eq!(buf.line_byte_range(0), 0..2);
+        assert_eq!(buf.line_byte_range(1), 3..5);
+    }
+
+    #[test]
+    fn line_byte_range_of_an_empty_line_is_empty() {
+        // "a\n" has an empty final line 1 at byte 2.
+        let buf = TextBuffer::from_str("a\n");
+        assert_eq!(buf.line_byte_range(1), 2..2);
+    }
+
+    #[test]
+    fn line_byte_range_of_the_last_line_without_a_newline_is_its_full_content() {
+        let buf = TextBuffer::from_str("ab\ncd");
+        // Last line has no trailing break, so its range runs to the buffer end.
+        assert_eq!(buf.line_byte_range(1), 3..5);
+        let single = TextBuffer::from_str("xyz");
+        assert_eq!(single.line_byte_range(0), 0..3);
+    }
+
+    #[test]
+    fn line_content_returns_the_line_text_without_its_break() {
+        let buf = TextBuffer::from_str("ab\n日本");
+        assert_eq!(buf.line_content(0), "ab");
+        assert_eq!(buf.line_content(1), "日本");
     }
 }
