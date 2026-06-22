@@ -4,6 +4,7 @@ import { instanceHighlights } from "./highlight-names.js";
 import { groupTokensByKind } from "./highlights.js";
 import { createInputSource } from "./input/create-input-source.js";
 import type { InputSource } from "./input/input-source.js";
+import { applyMovement, historyIntent, isInertNavKey } from "./keyboard.js";
 import { CachingMeasurePort, canvasMeasure } from "./measure.js";
 
 // Monotonic source of per-instance ids, so each surface gets disjoint highlight
@@ -73,9 +74,9 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   // Pick the input adapter by feature detection; the view holds only the port.
   const input = createInputSource(host, surface, editor.text());
 
-  // The device value the core was last synced to, held to diff each change
-  // against. Starts equal to the core text; updated after every applied edit (and,
-  // later, after programmatic pushes via `input.setValue` on undo/redo).
+  // The device value the core was last synced to, held to diff each change against.
+  // Starts equal to the core text; updated after every applied edit and after the
+  // programmatic pushes that undo/redo make via `applyProgrammatic` below.
   let lastValue = editor.text();
 
   const render = (): void => {
@@ -91,14 +92,34 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
     render();
   });
 
-  // Caret/selection movement is owned by the core cursor (grapheme/word-aware);
-  // the device selection is kept in lockstep so the next edit lands correctly.
+  // Push a programmatic core change (undo/redo) back to the device without echo,
+  // re-sync the cursor, and repaint. Keeps `lastValue` the authority for diffing.
+  const applyProgrammatic = (): void => {
+    const text = editor.text();
+    input.setValue(text);
+    lastValue = text;
+    syncDeviceFromCursor(editor, input);
+    render();
+  };
+
+  // Caret/selection movement and undo/redo are owned by the core; the device
+  // selection/value is kept in lockstep so the next edit lands correctly. Vertical
+  // and line/page nav have no core mover yet, so they are swallowed (inert) rather
+  // than left to drift the device caret out of sync with the core-owned caret.
   const onKeydown = (event: KeyboardEvent): void => {
     if (applyMovement(editor, event)) {
       event.preventDefault();
       syncDeviceFromCursor(editor, input);
       render();
+      return;
     }
+    const history = historyIntent(event);
+    if (history !== null) {
+      event.preventDefault();
+      if (history === "undo" ? editor.undo() : editor.redo()) applyProgrammatic();
+      return;
+    }
+    if (isInertNavKey(event)) event.preventDefault();
   };
   // Bind on `host`, not `surface`: the textarea fallback focuses a textarea that is
   // a sibling of `surface`, so keydown only reaches their common ancestor `host`.
@@ -146,38 +167,6 @@ function applyDiff(editor: Editor, oldValue: string, newValue: string): void {
   }
   if (inserted.length > 0) {
     editor.insert(byteStart, inserted);
-  }
-}
-
-/**
- * Map an arrow-key press onto the core cursor (the single source of truth for
- * caret/selection movement). Returns whether the event was a handled movement.
- *
- * Left/Right move by **grapheme** (so a caret never splits a cluster); with Ctrl
- * they move by **word** (the core's UAX-29 boundaries — the whitespace-skipping
- * word-jump policy lives in the core movers). Shift turns a move into an extend.
- * Vertical (Up/Down) and Home/End need movers the core does not expose yet, so they
- * are deliberately left to the browser default for now (deferred, not faked).
- */
-function applyMovement(editor: Editor, event: KeyboardEvent): boolean {
-  if (event.altKey || event.metaKey) return false;
-  const extend = event.shiftKey;
-  const word = event.ctrlKey;
-  switch (event.key) {
-    case "ArrowLeft":
-      if (extend && word) editor.extend_word_left();
-      else if (extend) editor.extend_left();
-      else if (word) editor.move_word_left();
-      else editor.move_left();
-      return true;
-    case "ArrowRight":
-      if (extend && word) editor.extend_word_right();
-      else if (extend) editor.extend_right();
-      else if (word) editor.move_word_right();
-      else editor.move_right();
-      return true;
-    default:
-      return false;
   }
 }
 
