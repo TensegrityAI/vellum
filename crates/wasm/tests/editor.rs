@@ -210,3 +210,19 @@ fn set_caret_mid_codepoint_returns_err() {
     // A valid caret at the end is fine.
     assert!(ed.set_caret(ed.text().len()).is_ok());
 }
+
+#[wasm_bindgen_test]
+fn line_count_crosses_the_boundary() {
+    assert_eq!(Editor::new("").line_count(), 1);
+    assert_eq!(Editor::new("a\nb\nc").line_count(), 3);
+    assert_eq!(Editor::new("a\n").line_count(), 2);
+}
+
+#[wasm_bindgen_test]
+fn visible_lines_windows_the_viewport_across_the_boundary() {
+    // 10 lines, line_height 20, viewport 60 tall, scrolled to the top → [0, 3).
+    let ed = Editor::new("0\n1\n2\n3\n4\n5\n6\n7\n8\n9");
+    assert_eq!(ed.visible_lines(0.0, 60.0, 20.0), vec![0, 3]);
+    // Scrolled to 50px (mid line 2) → lines 2..6.
+    assert_eq!(ed.visible_lines(50.0, 60.0, 20.0), vec![2, 6]);
+}

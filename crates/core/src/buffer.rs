@@ -98,6 +98,35 @@ impl TextBuffer {
         self.rope.len_bytes() == 0
     }
 
+    /// Number of lines, delimited by line breaks (`ropey`'s recognition: LF, CRLF,
+    /// CR, and the Unicode line separators).
+    ///
+    /// An empty buffer is **one** line; a trailing line break starts a final empty
+    /// line (so `"a\n"` is two lines). This is the rope's native O(log n) line
+    /// index, the foundation for arithmetic layout (ADR-0004).
+    pub fn line_count(&self) -> usize {
+        self.rope.len_lines()
+    }
+
+    /// Byte offset where 0-based `line` begins. `line == line_count()` yields the
+    /// buffer end (one past the last line), so callers can treat lines as a
+    /// half-open `[line_to_byte(i), line_to_byte(i + 1))` span.
+    ///
+    /// # Panics
+    /// Panics if `line > line_count()` (trusted-caller contract, as elsewhere).
+    pub fn line_to_byte(&self, line: usize) -> ByteOffset {
+        ByteOffset(self.rope.line_to_byte(line))
+    }
+
+    /// The 0-based index of the line containing byte offset `byte`. A line break
+    /// belongs to the line it terminates.
+    ///
+    /// # Panics
+    /// Panics if `byte > len()` (trusted-caller contract, as elsewhere).
+    pub fn byte_to_line(&self, byte: usize) -> usize {
+        self.rope.byte_to_line(byte)
+    }
+
     /// Insert `s` at byte offset `at`. Panics if `at` is not a char boundary.
     ///
     /// The byte offset is converted to a `ropey` char index. `ropey`'s
@@ -1087,5 +1116,49 @@ mod tests {
         // prev from len lands at the start of the final word "本" (after space).
         let len = buf.len();
         assert_eq!(buf.prev_word_boundary(ByteOffset(len)), ByteOffset(6));
+    }
+
+    #[test]
+    fn empty_buffer_is_one_line() {
+        assert_eq!(TextBuffer::new().line_count(), 1);
+    }
+
+    #[test]
+    fn line_count_counts_lf_delimited_lines() {
+        assert_eq!(TextBuffer::from_str("abc").line_count(), 1);
+        assert_eq!(TextBuffer::from_str("a\nb").line_count(), 2);
+        assert_eq!(TextBuffer::from_str("a\nb\nc").line_count(), 3);
+    }
+
+    #[test]
+    fn trailing_newline_starts_a_final_empty_line() {
+        assert_eq!(TextBuffer::from_str("a\n").line_count(), 2);
+    }
+
+    #[test]
+    fn line_to_byte_gives_each_line_start_and_the_end() {
+        // "ab\ncd": line 0 at 0, line 1 after the '\n' at 3, line 2 == end (5).
+        let buf = TextBuffer::from_str("ab\ncd");
+        assert_eq!(buf.line_to_byte(0), ByteOffset(0));
+        assert_eq!(buf.line_to_byte(1), ByteOffset(3));
+        assert_eq!(buf.line_to_byte(2), ByteOffset(5));
+    }
+
+    #[test]
+    fn byte_to_line_maps_each_byte_to_its_line() {
+        let buf = TextBuffer::from_str("ab\ncd");
+        assert_eq!(buf.byte_to_line(0), 0);
+        assert_eq!(buf.byte_to_line(2), 0); // the '\n' belongs to line 0
+        assert_eq!(buf.byte_to_line(3), 1); // first char of line 1
+        assert_eq!(buf.byte_to_line(5), 1); // end of buffer
+    }
+
+    #[test]
+    fn line_primitives_handle_multibyte_lines() {
+        // "a😀\n本": line 0 is "a😀" (1 + 4 = 5 bytes), '\n' at 5, line 1 at 6.
+        let buf = TextBuffer::from_str("a😀\n本");
+        assert_eq!(buf.line_count(), 2);
+        assert_eq!(buf.line_to_byte(1), ByteOffset(6));
+        assert_eq!(buf.byte_to_line(6), 1);
     }
 }

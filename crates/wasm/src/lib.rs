@@ -30,7 +30,7 @@
 //!   a char boundary after every edit, so the grapheme primitives never see a
 //!   mid-codepoint offset.
 
-use vellum_core::{ByteOffset, ByteRange, Document, EditError, Language, Selection};
+use vellum_core::{visible_lines, ByteOffset, ByteRange, Document, EditError, Language, Selection};
 use vellum_lang_jinja::Jinja;
 use wasm_bindgen::prelude::*;
 
@@ -102,6 +102,38 @@ impl Editor {
             .iter()
             .flat_map(|t| [t.start as u32, t.end as u32, t.kind as u32])
             .collect()
+    }
+
+    // --- Layout (ADR-0004) -----------------------------------------------
+    //
+    // The view measures font metrics ONCE via its Canvas `MeasurePort` and asks
+    // the core for layout; the arithmetic stays pure in `core` and never reads
+    // sizing from the DOM.
+
+    /// Number of lines (LF-delimited; an empty doc is 1, a trailing newline adds
+    /// a final empty line). The view multiplies this by the measured line height
+    /// to size the virtualized scroll area.
+    pub fn line_count(&self) -> usize {
+        self.doc.buffer().line_count()
+    }
+
+    /// The half-open `[start, end)` line range to render for a viewport
+    /// `viewport_height` px tall scrolled to `scroll_top` px, given the measured
+    /// `line_height`. Crosses to JS as a two-element `Uint32Array` `[start, end]`.
+    /// Pure windowing in `core` (ADR-0004).
+    pub fn visible_lines(
+        &self,
+        scroll_top: f32,
+        viewport_height: f32,
+        line_height: f32,
+    ) -> Vec<u32> {
+        let range = visible_lines(
+            self.doc.buffer().line_count(),
+            scroll_top,
+            viewport_height,
+            line_height,
+        );
+        vec![range.start as u32, range.end as u32]
     }
 
     // --- Undo / redo ------------------------------------------------------

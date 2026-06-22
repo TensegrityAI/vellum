@@ -7,6 +7,7 @@ mod document;
 mod edit_error;
 mod event;
 mod language;
+mod layout;
 mod offset;
 mod token;
 
@@ -16,5 +17,6 @@ pub use document::Document;
 pub use edit_error::EditError;
 pub use event::EditEvent;
 pub use language::{Completion, CompletionKind, Diagnostic, Hover, Language, Severity};
+pub use layout::{caret_pixel, locate, visible_lines, GridPosition, LineRange, Metrics};
 pub use offset::{ByteOffset, ByteRange, CharOffset, Utf16Offset};
 pub use token::{HighlightKind, Token};
