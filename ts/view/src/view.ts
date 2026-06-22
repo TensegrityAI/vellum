@@ -1,18 +1,14 @@
 import type { Editor } from "../wasm/vellum.js";
 import { computeDiff } from "./diff.js";
+import { instanceHighlights } from "./highlight-names.js";
 import { groupTokensByKind } from "./highlights.js";
 import { createInputSource } from "./input/create-input-source.js";
 
-/**
- * Maps the core's `HighlightKind` u32 (ADR-0009) to the CSS Custom Highlight
- * registry name. Kind 0 (Text) is intentionally absent — plain text is painted
- * by the surface's default color, not a highlight.
- */
-const HIGHLIGHT_NAME_BY_KIND: Record<number, string> = {
-  1: "vellum-variable",
-  2: "vellum-keyword",
-  3: "vellum-comment",
-};
+// Monotonic source of per-instance ids, so each surface gets disjoint highlight
+// names within this module instance. Two *separately bundled* vellum copies on one
+// page would each start at 0 and could mint the same id — acceptable for the engine's
+// single-bundle use; swap for a random id if true cross-bundle isolation is needed.
+let instanceSeq = 0;
 
 /**
  * Mount a Vellum editor surface into `host`.
@@ -24,13 +20,19 @@ const HIGHLIGHT_NAME_BY_KIND: Record<number, string> = {
  *   `HiddenTextareaInput` overlay. The view never knows which is active.
  * - Highlighting is painted purely via the CSS Custom Highlight API — zero
  *   `<span>` per token — by building `Range`s over the surface text node.
+ *   Names are scoped per instance (blocker #2) so multiple surfaces coexisting on
+ *   one page never clobber each other in the global `CSS.highlights` registry.
  *
  * Each input change is applied as the **minimal diff** between the core's current
  * text and the device's new value: one `delete` + one `insert` over only the
  * edited run, with UTF-16 (DOM) offsets converted to UTF-8 byte offsets via the
  * wasm helper before touching the byte-indexed core (Increment-1 blocker #1).
  *
- * @returns a disposer that releases the input source and clears highlights.
+ * The caller owns the returned disposer: re-mounting into the same `host` without
+ * calling it first leaks the previous instance's `<style>` and `CSS.highlights`
+ * entries (this `replaceChildren` only clears the host's DOM children).
+ *
+ * @returns a disposer that releases the input source, highlights, and style.
  */
 export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   host.replaceChildren();
@@ -40,6 +42,12 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   const textNode = document.createTextNode("");
   surface.appendChild(textNode);
   host.appendChild(surface);
+
+  // Instance-scoped highlight names + their `::highlight()` rules (blocker #2).
+  const { nameByKind, styleText } = instanceHighlights(String(instanceSeq++));
+  const styleEl = document.createElement("style");
+  styleEl.textContent = styleText;
+  (document.head ?? document.documentElement).appendChild(styleEl);
 
   // Pick the input adapter by feature detection; the view holds only the port.
   const input = createInputSource(host, surface, editor.text());
@@ -51,7 +59,7 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
 
   const render = (): void => {
     textNode.data = editor.text();
-    paintHighlights(textNode, editor.tokens());
+    paintHighlights(textNode, editor.tokens(), nameByKind, (b) => editor.byte_to_utf16(b));
   };
 
   input.onChange((change) => {
@@ -65,7 +73,8 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
 
   return () => {
     input.dispose();
-    clearHighlights();
+    clearHighlights(nameByKind);
+    styleEl.remove();
     host.replaceChildren();
   };
 }
@@ -99,26 +108,35 @@ function applyDiff(editor: Editor, oldValue: string, newValue: string): void {
   }
 }
 
-/** Build per-kind `Range`s over `textNode` and register them as CSS highlights. */
-function paintHighlights(textNode: Text, flat: Uint32Array): void {
+/**
+ * Build per-kind `Range`s over `textNode` and register them under this instance's
+ * `nameByKind` in `CSS.highlights`.
+ */
+function paintHighlights(
+  textNode: Text,
+  flat: Uint32Array,
+  nameByKind: Record<number, string>,
+  byteToUtf16: (byteOffset: number) => number,
+): void {
   if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
 
   const groups = groupTokensByKind(flat);
-  clearHighlights();
+  clearHighlights(nameByKind);
 
-  // Core offsets are byte offsets; DOM `Range` offsets are UTF-16 code units.
-  // For Increment 0 (ASCII-only demo content) these coincide, so we map
-  // directly. Multibyte mapping is an Increment 1 concern (ADR-0001).
+  // Token offsets are UTF-8 byte offsets (core space); DOM `Range` offsets are
+  // UTF-16 code units. Convert through the core's `byte_to_utf16` so multibyte
+  // text (emoji/CJK) highlights at the right place (ADR-0001). Token offsets come
+  // from the core's own buffer, so they are in-range char boundaries (no trap).
   const maxLen = textNode.data.length;
 
   for (const [kindStr, ranges] of Object.entries(groups)) {
-    const name = HIGHLIGHT_NAME_BY_KIND[Number(kindStr)];
+    const name = nameByKind[Number(kindStr)];
     if (name === undefined) continue;
 
     const domRanges: Range[] = [];
     for (const [start, end] of ranges) {
-      const s = Math.min(start, maxLen);
-      const e = Math.min(end, maxLen);
+      const s = Math.min(byteToUtf16(start), maxLen);
+      const e = Math.min(byteToUtf16(end), maxLen);
       if (e <= s) continue;
       const range = document.createRange();
       range.setStart(textNode, s);
@@ -131,14 +149,10 @@ function paintHighlights(textNode: Text, flat: Uint32Array): void {
   }
 }
 
-// ⚠️ `CSS.highlights` is a process-global singleton and these highlight names
-// are fixed strings, so Vellum currently assumes a SINGLE mounted surface. Two
-// coexisting `mountVellum` instances would clobber each other's ranges globally.
-// Increment 1 multi-surface support must namespace these names per instance.
-/** Remove all Vellum highlights from the global registry. */
-function clearHighlights(): void {
+/** Remove this instance's highlights (only its `nameByKind`) from the global registry. */
+function clearHighlights(nameByKind: Record<number, string>): void {
   if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
-  for (const name of Object.values(HIGHLIGHT_NAME_BY_KIND)) {
+  for (const name of Object.values(nameByKind)) {
     CSS.highlights.delete(name);
   }
 }

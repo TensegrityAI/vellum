@@ -1,7 +1,8 @@
 /*
- * Vellum syntax highlighting via the CSS Custom Highlight API.
- * No per-token <span>s — the colors below paint Range objects registered by
- * mountVellum() into CSS.highlights.
+ * Vellum surface + input chrome. No per-token <span>s: syntax colors are painted
+ * via the CSS Custom Highlight API, and because `::highlight()` only accepts a
+ * literal name, those rules are generated per instance in highlight-names.ts
+ * (blocker #2) and injected as a <style> by mountVellum — not declared here.
  */
 
 .vellum-surface,
@@ -34,17 +35,4 @@
   color: transparent;
   caret-color: #c0c5ce;
   outline: none;
-}
-
-::highlight(vellum-variable) {
-  color: #7c5cff;
-}
-
-::highlight(vellum-keyword) {
-  color: #d08770;
-}
-
-::highlight(vellum-comment) {
-  color: #8a8f98;
-  font-style: italic;
 }
