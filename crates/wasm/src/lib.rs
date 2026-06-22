@@ -30,7 +30,10 @@
 //!   a char boundary after every edit, so the grapheme primitives never see a
 //!   mid-codepoint offset.
 
-use vellum_core::{visible_lines, ByteOffset, ByteRange, Document, EditError, Language, Selection};
+use vellum_core::{
+    caret_pixel, locate, visible_lines, ByteOffset, ByteRange, Document, EditError, Language,
+    Metrics, Selection,
+};
 use vellum_lang_jinja::Jinja;
 use wasm_bindgen::prelude::*;
 
@@ -141,6 +144,30 @@ impl Editor {
         out
     }
 
+    /// The current selection's intersection with `line`, as a line-local UTF-16
+    /// `[start, end]` pair (the trailing line break excluded, like
+    /// [`tokens_in_line`](Self::tokens_in_line)). Empty if the selection is
+    /// collapsed, does not touch the line, or `line` is out of range — so the view
+    /// paints a `selection` highlight only where there is a selection.
+    pub fn selection_in_line(&self, line: usize) -> Vec<u32> {
+        let buffer = self.doc.buffer();
+        let sel = self.doc.selection();
+        let (sel_start, sel_end) = (sel.start().get(), sel.end().get());
+        if sel_start == sel_end || line >= buffer.line_count() {
+            return Vec::new();
+        }
+        let content = buffer.line_byte_range(line);
+        let start = sel_start.max(content.start);
+        let end = sel_end.min(content.end);
+        if end <= start {
+            return Vec::new();
+        }
+        let line_start_u16 = buffer.byte_to_utf16(ByteOffset::new(content.start)).get();
+        let start_u16 = buffer.byte_to_utf16(ByteOffset::new(start)).get() - line_start_u16;
+        let end_u16 = buffer.byte_to_utf16(ByteOffset::new(end)).get() - line_start_u16;
+        vec![start_u16 as u32, end_u16 as u32]
+    }
+
     // --- Layout (ADR-0004) -----------------------------------------------
     //
     // The view measures font metrics ONCE via its Canvas `MeasurePort` and asks
@@ -164,6 +191,24 @@ impl Editor {
             return String::new();
         }
         buffer.line_content(line).into_owned()
+    }
+
+    /// The caret's pixel position `[x, y]` (text-relative: `0,0` is the first
+    /// character of the first line, before the view's padding) for the current
+    /// selection head, given the measured `advance` and `line_height`. `x` is the
+    /// grapheme column × advance; `y` is the line × line height. Crosses to JS as a
+    /// two-element `Float32Array`.
+    pub fn caret_xy(&self, advance: f32, line_height: f32) -> Vec<f32> {
+        let head = self.doc.selection().head();
+        let pos = locate(self.doc.buffer(), head);
+        let (x, y) = caret_pixel(
+            pos,
+            Metrics {
+                advance,
+                line_height,
+            },
+        );
+        vec![x, y]
     }
 
     /// The half-open `[start, end)` line range to render for a viewport

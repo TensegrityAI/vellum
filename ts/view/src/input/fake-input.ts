@@ -52,6 +52,10 @@ export class FakeInput implements InputSource {
     // No-op: focus is meaningless without a DOM device. Kept to satisfy the port.
   }
 
+  updateCaretBounds(): void {
+    // No-op: there is no IME without a DOM device. Kept to satisfy the port.
+  }
+
   dispose(): void {
     this.#listener = null;
   }

@@ -1,4 +1,4 @@
-import type { InputChange, InputListener, InputSource } from "./input-source.js";
+import type { InputChange, InputListener, InputSource, ScreenRect } from "./input-source.js";
 
 // --- Minimal local typings for the EditContext API --------------------------
 //
@@ -17,6 +17,8 @@ interface EditContextTextUpdateEvent {
 interface EditContextLike {
   updateText(rangeStart: number, rangeEnd: number, text: string): void;
   updateSelection(start: number, end: number): void;
+  updateControlBounds(controlBounds: DOMRect): void;
+  updateSelectionBounds(selectionBounds: DOMRect): void;
   addEventListener(
     type: "textupdate",
     listener: (event: EditContextTextUpdateEvent) => void,
@@ -124,6 +126,13 @@ export class EditContextInput implements InputSource {
     this.#start = start;
     this.#end = end;
     this.#ec.updateSelection(start, end);
+  }
+
+  updateCaretBounds(control: ScreenRect, caret: ScreenRect): void {
+    // Tell the IME where the editor and caret are so the candidate window appears
+    // at the caret. `DOMRect.fromRect` is widely available where EditContext is.
+    this.#ec.updateControlBounds(DOMRect.fromRect(control));
+    this.#ec.updateSelectionBounds(DOMRect.fromRect(caret));
   }
 
   focus(): void {

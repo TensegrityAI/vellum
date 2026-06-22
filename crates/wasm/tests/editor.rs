@@ -280,3 +280,55 @@ fn line_text_returns_a_line_without_its_break() {
     assert_eq!(ed.line_text(2), ""); // trailing empty line
     assert_eq!(ed.line_text(9), ""); // out of range
 }
+
+#[wasm_bindgen_test]
+fn caret_xy_is_the_head_grid_position_in_pixels() {
+    // advance 8, line_height 20. Caret at byte 2 of "abc" → line 0, col 2 → (16, 0).
+    let mut ed = Editor::new("abc");
+    ed.set_caret(2).unwrap();
+    assert_eq!(ed.caret_xy(8.0, 20.0), vec![16.0, 0.0]);
+}
+
+#[wasm_bindgen_test]
+fn caret_xy_accounts_for_lines_and_graphemes() {
+    // "ab\ncd": caret at byte 4 ('d') → line 1, col 1 → (8, 20).
+    let mut ed = Editor::new("ab\ncd");
+    ed.set_caret(4).unwrap();
+    assert_eq!(ed.caret_xy(8.0, 20.0), vec![8.0, 20.0]);
+
+    // "😀x": caret after the emoji (byte 4) → line 0, col 1 (one grapheme) → (8, 0).
+    let mut emoji = Editor::new("😀x");
+    emoji.set_caret(4).unwrap();
+    assert_eq!(emoji.caret_xy(8.0, 20.0), vec![8.0, 0.0]);
+}
+
+#[wasm_bindgen_test]
+fn selection_in_line_is_empty_when_collapsed() {
+    let mut ed = Editor::new("abc");
+    ed.set_caret(1).unwrap();
+    assert_eq!(ed.selection_in_line(0), Vec::<u32>::new());
+}
+
+#[wasm_bindgen_test]
+fn selection_in_line_clips_to_the_line_in_utf16() {
+    let mut ed = Editor::new("abcdef");
+    ed.set_selection(1, 4).unwrap();
+    assert_eq!(ed.selection_in_line(0), vec![1, 4]);
+}
+
+#[wasm_bindgen_test]
+fn selection_in_line_spans_multiple_lines() {
+    // "ab\ncd": select bytes 1..5 → line 0 gets [1,2), line 1 gets [0,2).
+    let mut ed = Editor::new("ab\ncd");
+    ed.set_selection(1, 5).unwrap();
+    assert_eq!(ed.selection_in_line(0), vec![1, 2]);
+    assert_eq!(ed.selection_in_line(1), vec![0, 2]);
+}
+
+#[wasm_bindgen_test]
+fn selection_in_line_uses_utf16_columns() {
+    // "😀x": select all (bytes 0..5) → line-local UTF-16 [0, 3] (😀 is 2 units).
+    let mut ed = Editor::new("😀x");
+    ed.set_selection(0, 5).unwrap();
+    assert_eq!(ed.selection_in_line(0), vec![0, 3]);
+}

@@ -42,9 +42,32 @@
   white-space: pre;
 }
 
-/* Hidden textarea fallback (non-Chromium). TODO(I5): its 12px content inset must
- * be reconciled with the rendered line origin (lines start at top 0, padded 0 12px)
- * so the fallback caret aligns with caret_pixel's (0,0) origin once I5 renders it. */
+/* Caret: positioned by the view from the core's caret_xy (text-relative x + the
+ * line inset). A thin, blinking bar; reduced-motion users get a steady caret. */
+.vellum-caret {
+  position: absolute;
+  width: 2px;
+  background: #c0c5ce;
+  pointer-events: none;
+  animation: vellum-caret-blink 1s steps(1) infinite;
+}
+
+@keyframes vellum-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vellum-caret {
+    animation: none;
+  }
+}
+
+/* Hidden textarea fallback (non-Chromium): an invisible input-capture overlay. Its
+ * text AND caret are transparent — the rendered `.vellum-caret` (driven by the core
+ * cursor) is the single visible caret on every adapter. Its 0 12px inset matches the
+ * line origin so the (invisible) native caret still tracks the text for the IME. */
 .vellum-input {
   position: absolute;
   inset: 0;
@@ -55,6 +78,6 @@
   overflow: hidden;
   background: transparent;
   color: transparent;
-  caret-color: #c0c5ce;
+  caret-color: transparent;
   outline: none;
 }

@@ -22,9 +22,14 @@ const PAINTED_KINDS: Record<number, { suffix: string; declarations: string }> = 
   3: { suffix: "comment", declarations: "color: #8a8f98; font-style: italic;" },
 };
 
+/** The selection highlight tints the selected text; it is not a token kind. */
+const SELECTION_DECLARATIONS = "background-color: #2d4f67;";
+
 export interface InstanceHighlights {
   /** HighlightKind u32 → the instance-scoped `CSS.highlights` registry name. */
   readonly nameByKind: Record<number, string>;
+  /** The instance-scoped name for the text-selection highlight. */
+  readonly selectionName: string;
   /** `::highlight()` rules registering the colors for those names; inject as a `<style>`. */
   readonly styleText: string;
 }
@@ -41,5 +46,7 @@ export function instanceHighlights(id: string): InstanceHighlights {
     nameByKind[Number(kind)] = name;
     rules.push(`::highlight(${name}) { ${declarations} }`);
   }
-  return { nameByKind, styleText: rules.join("\n") };
+  const selectionName = `vellum-${id}-selection`;
+  rules.push(`::highlight(${selectionName}) { ${SELECTION_DECLARATIONS} }`);
+  return { nameByKind, selectionName, styleText: rules.join("\n") };
 }

@@ -3,6 +3,7 @@ import { computeDiff } from "./diff.js";
 import { instanceHighlights } from "./highlight-names.js";
 import { groupTokensByKind } from "./highlights.js";
 import { createInputSource } from "./input/create-input-source.js";
+import type { InputSource } from "./input/input-source.js";
 import { CachingMeasurePort, canvasMeasure } from "./measure.js";
 
 // Monotonic source of per-instance ids, so each surface gets disjoint highlight
@@ -10,6 +11,10 @@ import { CachingMeasurePort, canvasMeasure } from "./measure.js";
 // page would each start at 0 and could mint the same id — acceptable for the engine's
 // single-bundle use; swap for a random id if true cross-bundle isolation is needed.
 let instanceSeq = 0;
+
+// Horizontal text inset; MUST match `.vellum-line { padding: 0 12px }` in
+// highlight-styles.css so the caret (text-relative x from the core) lands on the glyph.
+const LINE_PADDING_LEFT = 12;
 
 /**
  * Mount a Vellum editor surface into `host`.
@@ -53,9 +58,11 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   content.className = "vellum-content";
   surface.appendChild(content);
   host.appendChild(surface);
+  const caret = document.createElement("div");
+  caret.className = "vellum-caret";
 
   // Instance-scoped highlight names + their `::highlight()` rules (blocker #2).
-  const { nameByKind, styleText } = instanceHighlights(String(instanceSeq++));
+  const { nameByKind, selectionName, styleText } = instanceHighlights(String(instanceSeq++));
   const styleEl = document.createElement("style");
   styleEl.textContent = styleText;
   (document.head ?? document.documentElement).appendChild(styleEl);
@@ -72,14 +79,31 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   let lastValue = editor.text();
 
   const render = (): void => {
-    renderViewport(editor, surface, content, measure, nameByKind);
+    renderViewport(editor, input, surface, content, caret, measure, nameByKind, selectionName);
   };
 
   input.onChange((change) => {
     applyDiff(editor, lastValue, change.value);
     lastValue = change.value;
+    // The device knows where the caret landed after the edit; adopt it as the
+    // core cursor (a positional insert/delete does not move the core selection).
+    syncCursorFromDevice(editor, change);
     render();
   });
+
+  // Caret/selection movement is owned by the core cursor (grapheme/word-aware);
+  // the device selection is kept in lockstep so the next edit lands correctly.
+  const onKeydown = (event: KeyboardEvent): void => {
+    if (applyMovement(editor, event)) {
+      event.preventDefault();
+      syncDeviceFromCursor(editor, input);
+      render();
+    }
+  };
+  // Bind on `host`, not `surface`: the textarea fallback focuses a textarea that is
+  // a sibling of `surface`, so keydown only reaches their common ancestor `host`.
+  // (The EditContext adapter focuses `surface` itself; keydown bubbles to `host` too.)
+  host.addEventListener("keydown", onKeydown);
   // Re-window on scroll: only the visible lines are ever in the DOM.
   surface.addEventListener("scroll", render, { passive: true });
 
@@ -87,9 +111,10 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   input.focus();
 
   return () => {
+    host.removeEventListener("keydown", onKeydown);
     surface.removeEventListener("scroll", render);
     input.dispose();
-    clearHighlights(nameByKind);
+    clearAllHighlights(nameByKind, selectionName);
     styleEl.remove();
     host.replaceChildren();
   };
@@ -125,18 +150,77 @@ function applyDiff(editor: Editor, oldValue: string, newValue: string): void {
 }
 
 /**
+ * Map an arrow-key press onto the core cursor (the single source of truth for
+ * caret/selection movement). Returns whether the event was a handled movement.
+ *
+ * Left/Right move by **grapheme** (so a caret never splits a cluster); with Ctrl
+ * they move by **word** (the core's UAX-29 boundaries — the whitespace-skipping
+ * word-jump policy lives in the core movers). Shift turns a move into an extend.
+ * Vertical (Up/Down) and Home/End need movers the core does not expose yet, so they
+ * are deliberately left to the browser default for now (deferred, not faked).
+ */
+function applyMovement(editor: Editor, event: KeyboardEvent): boolean {
+  if (event.altKey || event.metaKey) return false;
+  const extend = event.shiftKey;
+  const word = event.ctrlKey;
+  switch (event.key) {
+    case "ArrowLeft":
+      if (extend && word) editor.extend_word_left();
+      else if (extend) editor.extend_left();
+      else if (word) editor.move_word_left();
+      else editor.move_left();
+      return true;
+    case "ArrowRight":
+      if (extend && word) editor.extend_word_right();
+      else if (extend) editor.extend_right();
+      else if (word) editor.move_word_right();
+      else editor.move_right();
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Adopt the device's reported selection as the core cursor (UTF-16 → byte). Called
+ * after an edit, because a positional `insert`/`delete` does not move the core
+ * selection — the device is the authority on where the caret landed.
+ */
+function syncCursorFromDevice(editor: Editor, change: { selectionStart: number; selectionEnd: number }): void {
+  const anchor = editor.utf16_to_byte(change.selectionStart);
+  const head = editor.utf16_to_byte(change.selectionEnd);
+  editor.set_selection(anchor, head);
+}
+
+/**
+ * Push the core cursor back to the device (byte → UTF-16) after a keyboard move.
+ * Direction (which end is the head) is deliberately dropped — the device selection
+ * only feeds the next edit; the caret/selection render reads the core, which keeps
+ * direction. Do not "fix" this to preserve direction; it would change nothing for Inc-1.
+ */
+function syncDeviceFromCursor(editor: Editor, input: { setSelection(start: number, end: number): void }): void {
+  const anchor = editor.byte_to_utf16(editor.cursor_anchor());
+  const head = editor.byte_to_utf16(editor.cursor_head());
+  input.setSelection(Math.min(anchor, head), Math.max(anchor, head));
+}
+
+/**
  * Render the visible window: size the spacer to the whole document, ask the core
  * which lines are in view for the current scroll, and rebuild only those lines'
- * DOM + highlights. Off-screen lines never touch the DOM.
+ * DOM, highlights, and selection. Then position the caret. Off-screen lines never
+ * touch the DOM.
  */
 function renderViewport(
   editor: Editor,
+  input: InputSource,
   surface: HTMLElement,
   content: HTMLElement,
+  caret: HTMLElement,
   measure: CachingMeasurePort,
   nameByKind: Record<number, string>,
+  selectionName: string,
 ): void {
-  const { lineHeight } = measure.metrics();
+  const { advance, lineHeight } = measure.metrics();
   const lineCount = editor.line_count();
   content.style.height = `${lineCount * lineHeight}px`;
 
@@ -149,6 +233,7 @@ function renderViewport(
 
   content.replaceChildren();
   const rangesByKind: Record<number, Range[]> = {};
+  const selectionRanges: Range[] = [];
 
   for (let line = start; line < end; line += 1) {
     const lineEl = document.createElement("div");
@@ -161,9 +246,45 @@ function renderViewport(
     content.appendChild(lineEl);
 
     collectLineHighlights(editor.tokens_in_line(line), textNode, nameByKind, rangesByKind);
+    collectLineSelection(editor.selection_in_line(line), textNode, selectionRanges);
   }
 
   registerHighlights(rangesByKind, nameByKind);
+  registerSelection(selectionRanges, selectionName);
+  positionCaret(caret, content, editor, advance, lineHeight);
+  // Push caret bounds to the device so an IME positions its candidate window here.
+  // NOTE: this runs on every render (including scroll), so the two getBoundingClientRect
+  // reads are a per-frame reflow — acceptable for Inc-1; TODO(perf) compute the screen
+  // rect arithmetically (cached surface origin + caret_xy − scroll) to drop the reflow.
+  input.updateCaretBounds(surface.getBoundingClientRect(), caret.getBoundingClientRect());
+}
+
+/** Build a `Range` over `textNode` for the line-local selection span, if any. */
+function collectLineSelection(sel: Uint32Array, textNode: Text, out: Range[]): void {
+  if (sel.length < 2) return;
+  const maxLen = textNode.data.length;
+  const s = Math.min(sel[0] ?? 0, maxLen);
+  const e = Math.min(sel[1] ?? 0, maxLen);
+  if (e <= s) return;
+  const range = document.createRange();
+  range.setStart(textNode, s);
+  range.setEnd(textNode, e);
+  out.push(range);
+}
+
+/** Position the caret at the core head (text-relative x, plus the line inset). */
+function positionCaret(
+  caret: HTMLElement,
+  content: HTMLElement,
+  editor: Editor,
+  advance: number,
+  lineHeight: number,
+): void {
+  const xy = editor.caret_xy(advance, lineHeight);
+  caret.style.left = `${LINE_PADDING_LEFT + (xy[0] ?? 0)}px`;
+  caret.style.top = `${xy[1] ?? 0}px`;
+  caret.style.height = `${lineHeight}px`;
+  content.appendChild(caret);
 }
 
 /**
@@ -209,10 +330,26 @@ function registerHighlights(
   }
 }
 
-/** Remove this instance's highlights (only its `nameByKind`) from the global registry. */
+/** Replace this instance's selection highlight with the collected per-line ranges. */
+function registerSelection(ranges: Range[], selectionName: string): void {
+  if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
+  CSS.highlights.delete(selectionName);
+  if (ranges.length > 0) {
+    CSS.highlights.set(selectionName, new Highlight(...ranges));
+  }
+}
+
+/** Remove this instance's token highlights (only its `nameByKind`) from the registry. */
 function clearHighlights(nameByKind: Record<number, string>): void {
   if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
   for (const name of Object.values(nameByKind)) {
     CSS.highlights.delete(name);
   }
+}
+
+/** Remove all of this instance's highlights (tokens + selection) on dispose. */
+function clearAllHighlights(nameByKind: Record<number, string>, selectionName: string): void {
+  if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
+  clearHighlights(nameByKind);
+  CSS.highlights.delete(selectionName);
 }

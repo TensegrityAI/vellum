@@ -52,6 +52,11 @@ export class HiddenTextareaInput implements InputSource {
     this.#textarea.setSelectionRange(start, end);
   }
 
+  updateCaretBounds(): void {
+    // No-op: the textarea owns its own (invisible) caret, and the browser positions
+    // the IME candidate window at it; the overlay needs no explicit bounds push.
+  }
+
   focus(): void {
     this.#textarea.focus();
   }

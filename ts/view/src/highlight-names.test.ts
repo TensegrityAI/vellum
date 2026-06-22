@@ -37,4 +37,11 @@ describe("instanceHighlights", () => {
     expect(styleText).toContain("color: #8a8f98;"); // comment
     expect(styleText).toContain("font-style: italic");
   });
+
+  it("gives an instance-scoped selection highlight with a background rule", () => {
+    const { selectionName, styleText } = instanceHighlights("5");
+    expect(selectionName).toBe("vellum-5-selection");
+    expect(styleText).toContain("::highlight(vellum-5-selection)");
+    expect(styleText).toContain("background-color");
+  });
 });

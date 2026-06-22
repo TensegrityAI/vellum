@@ -6,11 +6,13 @@
  * no DOM). The view is written once against this contract; feature detection at
  * the boundary picks the adapter.
  *
- * **Not frozen — composition-incomplete by design (until Task I5).** The Inc-1
- * port covers value/selection edits (enough for Task I2's diff-based mutation).
- * IME composition state and pushing character/control bounds back to the device
- * (so the candidate window positions) are a deliberate Task-I5 addition that will
- * *widen* this interface and all three adapters. Treat it as evolving until then.
+ * **Composition (Task I5):** the port now also pushes the caret's screen bounds
+ * back to the device via [`updateCaretBounds`](InputSource.updateCaretBounds) so an
+ * IME positions its candidate window at the caret. Composed text itself already
+ * flows in through the normal `onChange` path (EditContext `textupdate` fires
+ * during composition). The bounds push is wired but **not yet IME-verified end to
+ * end** (needs a real IME). A richer composing-phase signal (start/update/end)
+ * remains a later refinement; the bounds push is the Increment-1 widening here.
  */
 
 /**
@@ -33,6 +35,14 @@ export interface InputChange {
 /** Listener for user-driven input changes. */
 export type InputListener = (change: InputChange) => void;
 
+/** A screen-space rectangle (CSS pixels), as `getBoundingClientRect` reports. */
+export interface ScreenRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /**
  * The outbound input port. The view subscribes via [`onChange`](InputSource.onChange)
  * for user-driven edits and pushes canonical state back with
@@ -48,6 +58,12 @@ export interface InputSource {
   setValue(value: string): void;
   /** Move the device selection (UTF-16 code units). */
   setSelection(start: number, end: number): void;
+  /**
+   * Tell the device where the editable region (`control`) and caret (`caret`) are
+   * on screen, so an IME positions its candidate window at the caret. A no-op for
+   * adapters that manage their own caret (the hidden textarea) or have none (tests).
+   */
+  updateCaretBounds(control: ScreenRect, caret: ScreenRect): void;
   /** Give the device input focus. */
   focus(): void;
   /** Detach listeners / DOM and release the device. */
