@@ -1,4 +1,5 @@
 import type { Editor } from "../wasm/vellum.js";
+import { computeDiff } from "./diff.js";
 import { groupTokensByKind } from "./highlights.js";
 import { createInputSource } from "./input/create-input-source.js";
 
@@ -24,11 +25,10 @@ const HIGHLIGHT_NAME_BY_KIND: Record<number, string> = {
  * - Highlighting is painted purely via the CSS Custom Highlight API — zero
  *   `<span>` per token — by building `Range`s over the surface text node.
  *
- * SHORTCUT (documented, until Task I2): on every input change we resync the core
- * to the device's full value via clear + reinsert, rather than diffing. This is
- * O(n) per keystroke and loses WASM event granularity, but is trivially correct
- * and round-trips every edit through the Rust core. Task I2 replaces it with
- * diff-based mutation (UTF-16 → byte conversion via the wasm helpers).
+ * Each input change is applied as the **minimal diff** between the core's current
+ * text and the device's new value: one `delete` + one `insert` over only the
+ * edited run, with UTF-16 (DOM) offsets converted to UTF-8 byte offsets via the
+ * wasm helper before touching the byte-indexed core (Increment-1 blocker #1).
  *
  * @returns a disposer that releases the input source and clears highlights.
  */
@@ -44,13 +44,19 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   // Pick the input adapter by feature detection; the view holds only the port.
   const input = createInputSource(host, surface, editor.text());
 
+  // The device value the core was last synced to, held to diff each change
+  // against. Starts equal to the core text; updated after every applied edit (and,
+  // later, after programmatic pushes via `input.setValue` on undo/redo).
+  let lastValue = editor.text();
+
   const render = (): void => {
     textNode.data = editor.text();
     paintHighlights(textNode, editor.tokens());
   };
 
   input.onChange((change) => {
-    syncCoreToValue(editor, change.value);
+    applyDiff(editor, lastValue, change.value);
+    lastValue = change.value;
     render();
   });
 
@@ -64,24 +70,32 @@ export function mountVellum(host: HTMLElement, editor: Editor): () => void {
   };
 }
 
-/** Resync the core buffer to `value` via clear + reinsert (Inc 0 shortcut). */
-function syncCoreToValue(editor: Editor, value: string): void {
-  const current = editor.text();
-  if (current === value) return;
-  // Core offsets are UTF-8 byte offsets; `delete`/`insert` PANIC (an
-  // unrecoverable WASM trap) on a non-char-boundary offset. The ONLY thing
-  // keeping this char-boundary-safe is that we always delete the FULL buffer
-  // [0, currentBytes] and insert at 0 — both are guaranteed boundaries.
-  // ⚠️ Increment 1 (ADR-0003) replaces this with diff-based mutation: it MUST
-  // convert UTF-16 (DOM/textarea) offsets to UTF-8 byte offsets before calling
-  // delete/insert, or the core will trap. Do not remove the full-buffer delete
-  // without doing that conversion first.
-  const currentBytes = new TextEncoder().encode(current).length;
-  if (currentBytes > 0) {
-    editor.delete(0, currentBytes);
+/**
+ * Apply the minimal diff between the core's current text (`oldValue`) and the
+ * device's `newValue` as one delete + one insert over the changed run. UTF-16
+ * (DOM) offsets are converted to the core's UTF-8 byte offsets via the wasm
+ * `utf16_to_byte` helper — both conversions happen against the unmutated core,
+ * then the delete runs, then the insert at the same start. Offsets index
+ * `oldValue`, which equals the core's current text, and the diff is surrogate-safe
+ * and in-range, so they land on char boundaries the core accepts (no trap).
+ *
+ * `utf16_to_byte`/`delete`/`insert` are non-trapping but throw a JS `Error` on a
+ * bad offset. They cannot throw here: well-formed UTF-16 — all a textarea or
+ * `EditContext` can deliver — yields in-range, boundary-aligned offsets. A throw
+ * would therefore signal a `lastValue`/core desync bug, not user input, so it is
+ * intentionally left to surface rather than swallowed into a silent corruption.
+ */
+function applyDiff(editor: Editor, oldValue: string, newValue: string): void {
+  const { utf16Start, utf16RemovedLen, inserted } = computeDiff(oldValue, newValue);
+  if (utf16RemovedLen === 0 && inserted.length === 0) return; // no-op
+
+  const byteStart = editor.utf16_to_byte(utf16Start);
+  if (utf16RemovedLen > 0) {
+    const byteEnd = editor.utf16_to_byte(utf16Start + utf16RemovedLen);
+    editor.delete(byteStart, byteEnd);
   }
-  if (value.length > 0) {
-    editor.insert(0, value);
+  if (inserted.length > 0) {
+    editor.insert(byteStart, inserted);
   }
 }
 
